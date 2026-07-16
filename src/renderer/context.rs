@@ -1,7 +1,6 @@
 use crate::renderer::debug_messenger::DebugMessenger;
 use ash::ext::debug_utils;
 use ash::khr::surface;
-use ash::vk::{PhysicalDevice, Queue, SurfaceKHR};
 use ash::{vk, Device, Entry, Instance};
 use std::ffi::c_char;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -13,11 +12,11 @@ pub struct Context{
     entry: Entry,
     instance: Instance,
     debug: DebugMessenger,
-    surface: SurfaceKHR,
+    surface: vk::SurfaceKHR,
     surface_loader: surface::Instance,
-    physical_device: PhysicalDevice,
+    physical_device: vk::PhysicalDevice,
     device: Device,
-    queue: Queue,
+    present_queue: vk::Queue,
     queue_family_index: u32,
 }
 
@@ -45,7 +44,7 @@ fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, vk::Resul
     Ok( unsafe { entry.create_instance(&create_info, None)? } )
 }
 
-fn select_physical_device(instance: &Instance, device_index: usize) -> Result<PhysicalDevice, vk::Result> {
+fn select_physical_device(instance: &Instance, device_index: usize) -> Result<vk::PhysicalDevice, vk::Result> {
     let devices = unsafe { instance.enumerate_physical_devices()? };
 
     if device_index >= devices.len() { panic!("Device index {} out of bounds", device_index); }
@@ -59,7 +58,7 @@ fn select_physical_device(instance: &Instance, device_index: usize) -> Result<Ph
     Ok( physical_device )
 }
 
-fn create_device(instance: &Instance, physical_device: PhysicalDevice, surface: SurfaceKHR, surface_loader: &surface::Instance) -> Result<(Device, Queue, u32), vk::Result> {
+fn create_device(instance: &Instance, physical_device: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &surface::Instance) -> Result<(Device, vk::Queue, u32), vk::Result> {
     // Queue family
     let queue_families = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
     let queue_family_index = queue_families
@@ -103,7 +102,7 @@ fn create_device(instance: &Instance, physical_device: PhysicalDevice, surface: 
     Ok((device, queue, queue_family_index))
 }
 
-fn create_surface(entry: &Entry, instance: &Instance, window: &Window) -> Result<(SurfaceKHR, surface::Instance), vk::Result> {
+fn create_surface(entry: &Entry, instance: &Instance, window: &Window) -> Result<(vk::SurfaceKHR, surface::Instance), vk::Result> {
     let window_handle = window.window_handle().expect("Could not get window handle").as_raw();
     let display_handle = window.display_handle().expect("Could not get display handle").as_raw();
 
@@ -120,8 +119,33 @@ impl Context{
         let debug = DebugMessenger::new(&entry, &instance).expect("Failed to create debug messenger");
         let (surface, surface_loader) = create_surface(&entry, &instance, &window).expect("Failed to create surface");
         let physical_device = select_physical_device(&instance, DEFAULT_PHYSICAL_DEVICE).expect("Failed to select physical device");
-        let (device, queue, queue_family_index) = create_device(&instance, physical_device, surface, &surface_loader).expect("Failed to create device");
+        let (device, present_queue, queue_family_index) = create_device(&instance, physical_device, surface, &surface_loader).expect("Failed to create device");
 
-        Context{ entry, instance, debug, surface, surface_loader, physical_device, device, queue, queue_family_index }
+        Context{ entry, instance, debug, surface, surface_loader, physical_device, device, present_queue, queue_family_index }
+    }
+
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+    pub fn instance(&self) -> &Instance {
+        &self.instance
+    }
+    pub fn surface_loader(&self) -> &surface::Instance {
+        &self.surface_loader
+    }
+    pub fn surface(&self) -> vk::SurfaceKHR {
+        self.surface
+    }
+    pub fn physical_device(&self) -> vk::PhysicalDevice {
+        self.physical_device
+    }
+    
+    pub fn destroy(&self){
+        unsafe {
+            self.device.destroy_device(None);
+            self.surface_loader.destroy_surface(self.surface, None);
+            self.debug.destroy();
+            self.instance.destroy_instance(None);
+        }
     }
 }

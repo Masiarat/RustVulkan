@@ -7,3 +7,4 @@ edition = "2024"
 ash = { version = "0.38.0", features = ["linked"] }
 winit = "0.30.13"
 ash-window = "0.13.0"
+colored = "3.1.1"
