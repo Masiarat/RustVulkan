@@ -1,43 +1,23 @@
-use crate::renderer::context::Context;
+use crate::renderer::context::SharedContext;
 use ash::khr::swapchain;
 use ash::vk;
 use itertools::izip;
-
-#[derive(Debug, Copy, Clone)]
-pub struct SwapChainImage {
-    pub image: vk::Image,
-    pub image_view: vk::ImageView,
-    pub render_finished: vk::Semaphore
-}
-
-impl SwapChainImage {
-    pub fn destroy(&self, context: &Context){
-        unsafe {
-            context.device.destroy_semaphore(self.render_finished, None);
-            context.device.destroy_image_view(self.image_view, None);
-        }
-    }
-}
+use std::sync::Arc;
 
 pub struct SwapChain {
-    swap_chain_loader: swapchain::Device,
-    swap_chain: vk::SwapchainKHR,
+    pub(crate) swapchain_loader: swapchain::Device,
+    pub(crate) swapchain: vk::SwapchainKHR,
 
-    swap_chain_images: Vec<SwapChainImage>,
+    pub(crate) swapchain_images: Vec<SwapChainImage>,
 
     image_format: vk::Format,
     image_extent: vk::Extent2D,
+
+    context: Arc<SharedContext>
 }
 
 impl SwapChain {
-
-    pub fn swap_chain_loader(&self) -> &swapchain::Device { &self.swap_chain_loader }
-    pub fn swap_chain(&self) -> vk::SwapchainKHR { self.swap_chain }
-    pub fn swap_chain_images(&self) -> &[SwapChainImage] { &self.swap_chain_images }
-
-    // pub fn image_format(&self) -> vk::Format { self.image_format }
-    // pub fn image_extent(&self) -> vk::Extent2D { self.image_extent }
-    fn create_image_views(context: &Context, images: &[vk::Image], image_format: vk::Format) -> Result<Vec<vk::ImageView>, vk::Result>{
+    fn create_image_views(context: &SharedContext, images: &[vk::Image], image_format: vk::Format) -> Result<Vec<vk::ImageView>, vk::Result>{
         let image_views: Vec<vk::ImageView> = images.iter().map(|&image| {
             let image_view_create_info = vk::ImageViewCreateInfo::default()
                 .image(image)
@@ -55,7 +35,7 @@ impl SwapChain {
         Ok( image_views )
     }
 
-    fn query_create_info(window_width: u32, window_height: u32, context: &Context) -> Result<(vk::SwapchainCreateInfoKHR<'static>, vk::Format, vk::Extent2D), vk::Result> {
+    fn query_create_info(window_width: u32, window_height: u32, context: &SharedContext) -> Result<(vk::SwapchainCreateInfoKHR<'static>, vk::Format, vk::Extent2D), vk::Result> {
         let surface_format = unsafe{
             context.surface_loader.get_physical_device_surface_formats(context.physical_device, context.surface)?[0]
         };
@@ -111,32 +91,51 @@ impl SwapChain {
         Ok( (swap_chain_create_info, surface_format.format, extent) )
     }
 
-    pub fn new(window_width: u32, window_height: u32, context: &Context) -> SwapChain{
-       let (swap_chain_create_info, image_format, image_extent) = SwapChain::query_create_info(window_width, window_height, context).expect("Failed to query swap chain info!");
+    pub fn new(window_width: u32, window_height: u32, context: Arc<SharedContext>) -> SwapChain{
+       let (swap_chain_create_info, image_format, image_extent) = SwapChain::query_create_info(window_width, window_height, context.as_ref()).expect("Failed to query swap chain info!");
 
-        let swap_chain_loader = swapchain::Device::new(&context.instance, &context.device);
-        let swap_chain = unsafe { swap_chain_loader.create_swapchain(&swap_chain_create_info, None).expect("Failed to create swap chain!") };
+        let swapchain_loader = swapchain::Device::new(&context.instance, &context.device);
+        let swapchain = unsafe { swapchain_loader.create_swapchain(&swap_chain_create_info, None).expect("Failed to create swap chain!") };
 
-        let images = unsafe { swap_chain_loader.get_swapchain_images(swap_chain).expect("Failed to get swap chain images!") };
-        let image_views = SwapChain::create_image_views(context, &images, image_format).expect("Failed to create image views!") ;
+        let images = unsafe { swapchain_loader.get_swapchain_images(swapchain).expect("Failed to get swap chain images!") };
+        let image_views = SwapChain::create_image_views(context.as_ref(), &images, image_format).expect("Failed to create image views!") ;
 
-        let render_semaphores = (0..images.len()).map(|_| {
-            unsafe { context.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
-        }).collect::<Result<Vec<_>, _>>()
+        let render_semaphores = (0..images.len())
+            .map(|_| {
+                unsafe { context.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
+            }).collect::<Result<Vec<_>, _>>()
             .expect("Failed to create render semaphores!");
 
-        let swap_chain_images = izip!(images, image_views, render_semaphores)
+        let swapchain_images = izip!(images, image_views, render_semaphores)
             .map(|(image, image_view, render_finished)| {
                 SwapChainImage { image, image_view, render_finished }
             }).collect::<Vec<_>>();
 
-        SwapChain{ swap_chain_loader, swap_chain, swap_chain_images, image_format, image_extent }
+        SwapChain{ swapchain_loader, swapchain, swapchain_images, image_format, image_extent, context }
     }
+}
 
-    pub fn destroy(self, context: &Context){
-        for image in &self.swap_chain_images {
-            image.destroy(context);
+impl Drop for SwapChain {
+    fn drop(&mut self) {
+        unsafe {
+            self.context.device
+                .device_wait_idle()
+                .expect("Failed to wait for device idle");
+
+            println!("Destroying image_views and semaphores...");
+            for image in &self.swapchain_images {
+                self.context.device.destroy_image_view(image.image_view, None);
+                self.context.device.destroy_semaphore(image.render_finished, None);
+            }
+            println!("Destroying swapchain...");
+            self.swapchain_loader.destroy_swapchain(self.swapchain, None);
         }
-        unsafe { self.swap_chain_loader.destroy_swapchain(self.swap_chain, None); }
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct SwapChainImage {
+    pub(crate) image: vk::Image,
+    pub(crate) image_view: vk::ImageView,
+    pub(crate) render_finished: vk::Semaphore
 }

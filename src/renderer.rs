@@ -1,7 +1,8 @@
-use crate::renderer::context::Context;
+use crate::renderer::context::SharedContext;
 use crate::renderer::frame::Frame;
 use crate::renderer::swap_chain::SwapChain;
 use ash::vk;
+use std::sync::Arc;
 use std::time::Duration;
 use winit::window::Window;
 
@@ -12,58 +13,53 @@ mod debug_messenger;
 mod swap_chain;
 mod frame;
 mod image;
-mod allocator;
 pub mod util;
 
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
 pub struct Renderer{
-    swap_chain: Option<SwapChain>,
-    context: Option<Context>,
-    frames: Option<Vec<Frame>>,
+    frames: Vec<Frame>,
+    swap_chain: SwapChain,
+    context: Arc<SharedContext>,
 }
 
 impl Renderer{
 
     fn current_frame(&self, frame_number: usize) -> &Frame{
-        &self.frames.as_ref().unwrap()[ frame_number % FRAME_COUNT ]
+        &self.frames[ frame_number % FRAME_COUNT ]
     }
 
     pub fn new(window_width: u32, window_height: u32, window: &Window) -> Renderer{
-        let context = Context::new(window);
-        let swap_chain = SwapChain::new(window_width, window_height, &context);
+        let context = Arc::new(SharedContext::new(window));
+        let swap_chain = SwapChain::new(window_width, window_height, context.clone());
         let frames = (0..FRAME_COUNT).map(
-            |_| Frame::new(&context).expect("Failed to create frame!")
+            |_| Frame::new(context.clone()).expect("Failed to create frame!")
         ).collect();
-        Renderer { context: Some(context), swap_chain: Some(swap_chain), frames: Some(frames)}
+        Renderer { context, swap_chain, frames}
     }
 
     pub fn draw(&self, frame_number: usize) -> Result<(), vk::Result>{
-        let context = self.context.as_ref().expect("Context is not initialized!");
-        let swap_chain = self.swap_chain.as_ref().expect("Swap chain is not initialized!");
-        let frames = self.frames.as_ref().expect("Frames are not initialized!");
-
         let current_frame = self.current_frame(frame_number);
 
-        unsafe {context.device.wait_for_fences(&[current_frame.render_fence], true, ONE_SECOND.as_nanos() as u64)? }
-        unsafe {context.device.reset_fences(&[current_frame.render_fence])? };
+        unsafe {self.context.device.wait_for_fences(&[current_frame.render_fence], true, ONE_SECOND.as_nanos() as u64)? }
+        unsafe {self.context.device.reset_fences(&[current_frame.render_fence])? };
 
         let (swap_chain_image_index, _) = unsafe {
-            swap_chain.swap_chain_loader().acquire_next_image(
-                swap_chain.swap_chain(),
+            self.swap_chain.swapchain_loader.acquire_next_image(
+                self.swap_chain.swapchain,
                 ONE_SECOND.as_nanos() as u64,
                 current_frame.swap_chain_semaphore,
                 vk::Fence::null())?
         };
-        let current_swap_chain_image = swap_chain.swap_chain_images()[swap_chain_image_index as usize];
+        let current_swap_chain_image = self.swap_chain.swapchain_images[swap_chain_image_index as usize];
 
         let command_buffer = current_frame.command_buffer;
-        unsafe { context.device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())? };
+        unsafe { self.context.device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())? };
 
         let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        unsafe { context.device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?; }
+        unsafe { self.context.device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?; }
 
-        image::transition_image(&context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+        image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
         let flash = (frame_number as f32 / 120.0).sin().abs();
         let clear_color_value = vk::ClearColorValue{ float32: [0.0, 0.0, flash, 0.0] };
@@ -75,11 +71,11 @@ impl Renderer{
             .layer_count(vk::REMAINING_ARRAY_LAYERS)
             .aspect_mask(vk::ImageAspectFlags::COLOR);
 
-        unsafe { context.device.cmd_clear_color_image(command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, &clear_color_value, &[clear_range]) }
+        unsafe { self.context.device.cmd_clear_color_image(command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, &clear_color_value, &[clear_range]) }
 
-        image::transition_image(&context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, vk::ImageLayout::PRESENT_SRC_KHR);
+        image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, vk::ImageLayout::PRESENT_SRC_KHR);
 
-        unsafe { context.device.end_command_buffer(command_buffer)? };
+        unsafe { self.context.device.end_command_buffer(command_buffer)? };
 
         let command_buffer_submit_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
         let wait_info = vk::SemaphoreSubmitInfo::default()
@@ -99,9 +95,9 @@ impl Renderer{
             .signal_semaphore_infos(s_infos)
             .command_buffer_infos(cmb_infos);
 
-        unsafe { context.device.queue_submit2(context.present_queue, &[submit_info], current_frame.render_fence)? };
+        unsafe { self.context.device.queue_submit2(self.context.present_queue, &[submit_info], current_frame.render_fence)? };
 
-        let swap_chains = &[swap_chain.swap_chain()];
+        let swap_chains = &[self.swap_chain.swapchain];
         let wait_semaphores = &[current_swap_chain_image.render_finished];
         let image_indices = &[swap_chain_image_index];
         let present_info = vk::PresentInfoKHR::default()
@@ -109,25 +105,8 @@ impl Renderer{
             .wait_semaphores(wait_semaphores)
             .image_indices(image_indices);
 
-        unsafe { swap_chain.swap_chain_loader().queue_present(context.present_queue, &present_info)? };
+        unsafe { self.swap_chain.swapchain_loader.queue_present(self.context.present_queue, &present_info)? };
 
         Ok(())
-    }
-}
-
-impl Drop for Renderer{
-    fn drop(&mut self) {
-        unsafe {
-            self.context.as_ref().unwrap()
-                .device
-                .device_wait_idle()
-                .expect("Failed to wait for Vulkan device");
-        }
-
-        for frame in self.frames.take().unwrap(){
-            frame.destroy(self.context.as_ref().unwrap());
-        }
-        self.swap_chain.take().unwrap().destroy(&self.context.as_ref().unwrap());
-        self.context.take().unwrap().destroy();
     }
 }

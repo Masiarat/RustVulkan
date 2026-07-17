@@ -1,6 +1,6 @@
-use crate::renderer::context::Context;
+use crate::renderer::context::SharedContext;
 use ash::vk;
-
+use std::sync::Arc;
 
 pub struct Frame {
     pub command_pool: vk::CommandPool,
@@ -8,11 +8,12 @@ pub struct Frame {
 
     pub render_fence: vk::Fence,
     pub swap_chain_semaphore: vk::Semaphore,
+
+    context: Arc<SharedContext>
 }
 
 impl Frame {
-
-    pub fn new(context: &Context) -> Result<Frame, vk::Result>{
+    pub fn new(context: Arc<SharedContext>) -> Result<Frame, vk::Result>{
         let command_pool_create_info =
             vk::CommandPoolCreateInfo::default()
                 .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
@@ -32,14 +33,23 @@ impl Frame {
         let semaphore_create_info = vk::SemaphoreCreateInfo::default();
         let swap_chain_semaphore = unsafe { context.device.create_semaphore(&semaphore_create_info, None)? };
 
-        Ok( Frame { command_pool, command_buffer, render_fence, swap_chain_semaphore } )
+        Ok( Frame { command_pool, command_buffer, render_fence, swap_chain_semaphore, context } )
     }
+}
 
-    pub fn destroy(self, context: &Context){
-        unsafe { context.device.device_wait_idle().expect("Idle device failed!") }
-        unsafe { context.device.destroy_command_pool(self.command_pool, None) };
+impl Drop for Frame {
+    fn drop(&mut self) {
+        unsafe {
+            self.context.device
+                .device_wait_idle()
+                .expect("Failed to wait for device idle");
 
-        unsafe { context.device.destroy_fence(self.render_fence, None) };
-        unsafe { context.device.destroy_semaphore(self.swap_chain_semaphore, None) };
+
+            self.context.device.device_wait_idle().expect("Idle device failed!");
+            self.context.device.destroy_command_pool(self.command_pool, None);
+
+            self.context.device.destroy_fence(self.render_fence, None);
+            self.context.device.destroy_semaphore(self.swap_chain_semaphore, None);
+        };
     }
 }

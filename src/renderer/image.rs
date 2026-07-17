@@ -1,17 +1,19 @@
-use crate::renderer::context::Context;
-use std::error::Error;
-
+use crate::renderer::context::SharedContext;
 use ash::{vk, Device};
 use gpu_allocator::vulkan::{Allocation, AllocationScheme, Allocator};
 use gpu_allocator::MemoryLocation;
+use std::error::Error;
+use std::sync::Arc;
 
 struct Image {
     image: vk::Image,
-    allocation: Allocation
+    allocation: Option<Allocation>,
+
+    context: Arc<SharedContext>
 }
 
 impl Image {
-    fn new_display(window_width: u32, window_height: u32, name: &str, device: &Device, allocator: &mut Allocator) -> Result<Image, Box<dyn Error>>{
+    pub fn new_display(window_width: u32, window_height: u32, name: &str, device: &Device, context: Arc<SharedContext>) -> Result<Image, Box<dyn Error>>{
         let extent = vk::Extent3D { width: window_width, height: window_height, depth: 1 };
         let format = vk::Format::R16G16B16A16_SFLOAT;
         let usage = vk::ImageUsageFlags::TRANSFER_SRC
@@ -22,9 +24,11 @@ impl Image {
         let image_create_info = vk::ImageCreateInfo::from(StandardImageCreateInfo{format, usage, extent});
         let image = unsafe { device.create_image(&image_create_info, None)? };
 
-        let allocation = Self::allocate(device, allocator, image, name, MemoryLocation::GpuOnly)?;
+        let allocation = context.with_allocator(|allocator| {
+            Self::allocate(device, allocator, image, name, MemoryLocation::GpuOnly)
+        })?;
 
-        Ok( Image { image, allocation } )
+        Ok( Image { image, allocation: Some(allocation), context } )
     }
 
     fn allocate(device: &Device, allocator: &mut Allocator, image: vk::Image, name: &str, location: MemoryLocation) -> Result<Allocation, Box<dyn Error>>{
@@ -41,14 +45,20 @@ impl Image {
 
         Ok(allocation)
     }
+}
 
-    fn destroy(self, device: &Device, allocator: &mut Allocator){
-        allocator.free(self.allocation).expect("Failed to free image allocation");
-        unsafe { device.destroy_image(self.image, None) };
+impl Drop for Image{
+    fn drop(&mut self) {
+        println!("Freeing image allocation");
+        self.context.allocator.lock().as_mut().expect("Allocator mutex poisoned").as_mut().expect("Allocator was invalid")
+            .free(self.allocation.take().expect("Allocation was invalid"))
+            .expect("Failed to free image allocation");
+        println!("Destroying image");
+        unsafe { self.context.device.destroy_image(self.image, None) };
     }
 }
 
-pub fn transition_image(context: &Context, command_buffer: vk::CommandBuffer, image: vk::Image, current_layout: vk::ImageLayout, new_layout: vk::ImageLayout){
+pub fn transition_image(context: &SharedContext, command_buffer: vk::CommandBuffer, image: vk::Image, current_layout: vk::ImageLayout, new_layout: vk::ImageLayout){
     let image_memory_barrier = vk::ImageMemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)

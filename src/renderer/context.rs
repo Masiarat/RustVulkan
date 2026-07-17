@@ -2,13 +2,16 @@ use crate::renderer::debug_messenger::DebugMessenger;
 use ash::ext::debug_utils;
 use ash::khr::surface;
 use ash::{vk, Device, Entry, Instance};
+use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
+use std::error::Error;
 use std::ffi::c_char;
+use std::sync::Mutex;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
 const DEFAULT_PHYSICAL_DEVICE: usize = 0;
 
-pub(crate) struct Context{
+pub(crate) struct SharedContext {
     entry: Entry,
     pub(crate) instance: Instance,
     debug: DebugMessenger,
@@ -18,6 +21,27 @@ pub(crate) struct Context{
     pub(crate) present_queue: vk::Queue,
     pub(crate) present_queue_family: u32,
     pub(crate) device: Device,
+    pub(crate) allocator: Mutex<Option<Allocator>>
+}
+
+impl SharedContext {
+    pub fn new(window: &Window) -> SharedContext {
+        let entry = Entry::linked();
+        let instance = create_instance(&entry, &window).expect("Failed to create instance");
+        let debug = DebugMessenger::new(&entry, &instance).expect("Failed to create debug messenger");
+        let (surface, surface_loader) = create_surface(&entry, &instance, &window).expect("Failed to create surface");
+        let physical_device = select_physical_device(&instance, DEFAULT_PHYSICAL_DEVICE).expect("Failed to select physical device");
+        let (device, present_queue, present_queue_family) = create_device(&instance, physical_device, surface, &surface_loader).expect("Failed to create device");
+        let allocator = create_allocator(instance.clone(), physical_device.clone(), device.clone()).expect("Failed to create allocator");
+
+        SharedContext { entry, instance, debug, surface, surface_loader, physical_device, device, present_queue, present_queue_family, allocator: Mutex::new(Some(allocator)) }
+    }
+
+    pub fn with_allocator<R>(&self, f: impl FnOnce(&mut Allocator) -> R) -> R{
+        let mut guard = self.allocator.lock().expect("Allocator mutex poisoned");
+        let allocator = guard.as_mut().expect("Allocator was invalid");
+        f(allocator)
+    }
 }
 
 fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, vk::Result> {
@@ -71,7 +95,8 @@ fn create_device(instance: &Instance, physical_device: vk::PhysicalDevice, surfa
         .queue_family_index(queue_family_index)
         .queue_priorities(&queue_priorities);
 
-    unsafe { surface_loader.get_physical_device_surface_support(physical_device, queue_family_index, surface).expect("Could not get physical device surface!") };
+    let surface_support = unsafe { surface_loader.get_physical_device_surface_support(physical_device, queue_family_index, surface).expect("Could not get physical device surface!") };
+    assert!(surface_support, "Surface does not support queue family");
 
     // Logical device
     let mut vk_12_features = vk::PhysicalDeviceVulkan12Features::default()
@@ -112,24 +137,37 @@ fn create_surface(entry: &Entry, instance: &Instance, window: &Window) -> Result
     Ok( (surface, surface_loader) )
 }
 
-impl Context{
-    pub fn new(window: &Window) -> Context {
-        let entry = Entry::linked();
-        let instance = create_instance(&entry, &window).expect("Failed to create instance");
-        let debug = DebugMessenger::new(&entry, &instance).expect("Failed to create debug messenger");
-        let (surface, surface_loader) = create_surface(&entry, &instance, &window).expect("Failed to create surface");
-        let physical_device = select_physical_device(&instance, DEFAULT_PHYSICAL_DEVICE).expect("Failed to select physical device");
-        let (device, present_queue, present_queue_family) = create_device(&instance, physical_device, surface, &surface_loader).expect("Failed to create device");
+fn create_allocator(instance: Instance, physical_device: vk::PhysicalDevice, device: Device, ) -> Result<Allocator, Box<dyn Error>>{
+    let allocator_create_desc = AllocatorCreateDesc {
+        instance,
+        device,
+        physical_device,
+        debug_settings: Default::default(),
+        buffer_device_address: true,
+        allocation_sizes: Default::default(),
+    };
+    Ok( Allocator::new(&allocator_create_desc)? )
+}
 
-        Context{ entry, instance, debug, surface, surface_loader, physical_device, device, present_queue, present_queue_family }
-    }
-    
-    pub fn destroy(self){
+impl Drop for SharedContext{
+    //todo free allocator
+    fn drop(&mut self) {
         unsafe {
+            self.device
+                .device_wait_idle()
+                .expect("Failed to wait for device idle");
+
+            println!("Destroying allocator");
+            drop(self.allocator.lock().unwrap().take());
+            println!("Destroying device");
             self.device.destroy_device(None);
+            println!("Destroying surface");
             self.surface_loader.destroy_surface(self.surface, None);
+            println!("Destroying debug messenger");
             self.debug.destroy();
+            println!("Destroying instance");
             self.instance.destroy_instance(None);
         }
     }
 }
+

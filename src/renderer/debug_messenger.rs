@@ -70,8 +70,9 @@ impl DebugMessenger {
         };
         Ok ( DebugMessenger{debug_loader, debug_messenger } )
     }
-
-    pub unsafe fn destroy(self) { unsafe {
+    
+    
+    pub unsafe fn destroy(&self) { unsafe {
         self.debug_loader.destroy_debug_utils_messenger(self.debug_messenger, None);
     }}
 }
