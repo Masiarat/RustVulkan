@@ -3,25 +3,14 @@ use ash::vk;
 
 
 pub struct Frame {
-    command_pool: vk::CommandPool,
-    command_buffer: vk::CommandBuffer,
+    pub command_pool: vk::CommandPool,
+    pub command_buffer: vk::CommandBuffer,
 
-    render_fence: vk::Fence,
-    swap_chain_semaphore: vk::Semaphore,
+    pub render_fence: vk::Fence,
+    pub swap_chain_semaphore: vk::Semaphore,
 }
 
 impl Frame {
-
-    pub fn main_command_buffer(&self) -> vk::CommandBuffer{
-        self.command_buffer
-    }
-
-    pub fn render_fence(&self) -> vk::Fence{
-        self.render_fence
-    }
-    pub fn swap_chain_semaphore(&self) -> vk::Semaphore{
-        self.swap_chain_semaphore
-    }
 
     pub fn new(context: &Context) -> Result<Frame, vk::Result>{
         let command_pool_create_info =
@@ -46,7 +35,7 @@ impl Frame {
         Ok( Frame { command_pool, command_buffer, render_fence, swap_chain_semaphore } )
     }
 
-    pub fn destroy(&self, context: &Context){
+    pub fn destroy(self, context: &Context){
         unsafe { context.device.device_wait_idle().expect("Idle device failed!") }
         unsafe { context.device.destroy_command_pool(self.command_pool, None) };
 

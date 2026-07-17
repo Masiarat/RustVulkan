@@ -124,9 +124,7 @@ impl Context{
         Context{ entry, instance, debug, surface, surface_loader, physical_device, device, present_queue, present_queue_family }
     }
     
-    //TODO change to public fields
-    
-    pub fn destroy(&self){
+    pub fn destroy(self){
         unsafe {
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);

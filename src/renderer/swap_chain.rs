@@ -133,7 +133,7 @@ impl SwapChain {
         SwapChain{ swap_chain_loader, swap_chain, swap_chain_images, image_format, image_extent }
     }
 
-    pub fn destroy(&self, context: &Context){
+    pub fn destroy(self, context: &Context){
         for image in &self.swap_chain_images {
             image.destroy(context);
         }
