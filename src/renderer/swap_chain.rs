@@ -1,13 +1,29 @@
 use crate::renderer::context::Context;
 use ash::khr::swapchain;
 use ash::vk;
+use itertools::izip;
+
+#[derive(Debug, Copy, Clone)]
+pub struct SwapChainImage {
+    pub image: vk::Image,
+    pub image_view: vk::ImageView,
+    pub render_finished: vk::Semaphore
+}
+
+impl SwapChainImage {
+    pub fn destroy(&self, context: &Context){
+        unsafe {
+            context.device().destroy_semaphore(self.render_finished, None);
+            context.device().destroy_image_view(self.image_view, None);
+        }
+    }
+}
 
 pub struct SwapChain {
     swap_chain_loader: swapchain::Device,
     swap_chain: vk::SwapchainKHR,
 
-    images: Vec<vk::Image>,
-    image_views: Vec<vk::ImageView>,
+    swap_chain_images: Vec<SwapChainImage>,
 
     image_format: vk::Format,
     image_extent: vk::Extent2D,
@@ -15,8 +31,10 @@ pub struct SwapChain {
 
 impl SwapChain {
 
-    // pub fn swap_chain(&self) -> vk::SwapchainKHR { self.swap_chain }
-    // pub fn images(&self) -> &[vk::Image] { &self.images }
+    pub fn swap_chain_loader(&self) -> &swapchain::Device { &self.swap_chain_loader }
+    pub fn swap_chain(&self) -> vk::SwapchainKHR { self.swap_chain }
+    pub fn swap_chain_images(&self) -> &[SwapChainImage] { &self.swap_chain_images }
+
     // pub fn image_format(&self) -> vk::Format { self.image_format }
     // pub fn image_extent(&self) -> vk::Extent2D { self.image_extent }
     fn create_image_views(context: &Context, images: &[vk::Image], image_format: vk::Format) -> Result<Vec<vk::ImageView>, vk::Result>{
@@ -71,7 +89,7 @@ impl SwapChain {
         let present_mode = present_modes
             .iter()
             .cloned()
-            .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+            .find(|&mode| mode == vk::PresentModeKHR::FIFO_RELAXED)
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
         let swap_chain_create_info = vk::SwapchainCreateInfoKHR::default()
@@ -80,7 +98,7 @@ impl SwapChain {
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
             .image_extent(extent)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::COLOR_ATTACHMENT)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(pre_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -90,6 +108,7 @@ impl SwapChain {
 
         Ok( (swap_chain_create_info, surface_format.format, extent) )
     }
+
     pub fn new(window_width: u32, window_height: u32, context: &Context) -> SwapChain{
        let (swap_chain_create_info, image_format, image_extent) = SwapChain::query_create_info(window_width, window_height, context).expect("Failed to query swap chain info!");
 
@@ -99,12 +118,22 @@ impl SwapChain {
         let images = unsafe { swap_chain_loader.get_swapchain_images(swap_chain).expect("Failed to get swap chain images!") };
         let image_views = SwapChain::create_image_views(context, &images, image_format).expect("Failed to create image views!") ;
 
-        SwapChain{ swap_chain_loader, swap_chain, images, image_views, image_format, image_extent }
+        let render_semaphores = (0..images.len()).map(|_| {
+            unsafe { context.device().create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
+        }).collect::<Result<Vec<_>, _>>()
+            .expect("Failed to create render semaphores!");
+
+        let swap_chain_images = izip!(images, image_views, render_semaphores)
+            .map(|(image, image_view, render_finished)| {
+                SwapChainImage { image, image_view, render_finished }
+            }).collect::<Vec<_>>();
+
+        SwapChain{ swap_chain_loader, swap_chain, swap_chain_images, image_format, image_extent }
     }
 
     pub fn destroy(&self, context: &Context){
-        for image_view in &self.image_views{
-            unsafe { context.device().destroy_image_view(*image_view, None); }
+        for image in &self.swap_chain_images {
+            image.destroy(context);
         }
         unsafe { self.swap_chain_loader.destroy_swapchain(self.swap_chain, None); }
     }

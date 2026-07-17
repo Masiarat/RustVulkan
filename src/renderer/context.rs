@@ -17,7 +17,7 @@ pub struct Context{
     physical_device: vk::PhysicalDevice,
     device: Device,
     present_queue: vk::Queue,
-    queue_family_index: u32,
+    present_queue_family: u32,
 }
 
 fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, vk::Result> {
@@ -119,11 +119,14 @@ impl Context{
         let debug = DebugMessenger::new(&entry, &instance).expect("Failed to create debug messenger");
         let (surface, surface_loader) = create_surface(&entry, &instance, &window).expect("Failed to create surface");
         let physical_device = select_physical_device(&instance, DEFAULT_PHYSICAL_DEVICE).expect("Failed to select physical device");
-        let (device, present_queue, queue_family_index) = create_device(&instance, physical_device, surface, &surface_loader).expect("Failed to create device");
+        let (device, present_queue, present_queue_family) = create_device(&instance, physical_device, surface, &surface_loader).expect("Failed to create device");
 
-        Context{ entry, instance, debug, surface, surface_loader, physical_device, device, present_queue, queue_family_index }
+        Context{ entry, instance, debug, surface, surface_loader, physical_device, device, present_queue, present_queue_family }
     }
 
+    pub fn present_queue(&self) -> vk::Queue {
+        self.present_queue
+    }
     pub fn device(&self) -> &Device {
         &self.device
     }
@@ -138,6 +141,9 @@ impl Context{
     }
     pub fn physical_device(&self) -> vk::PhysicalDevice {
         self.physical_device
+    }
+    pub fn present_queue_family(&self) -> u32 {
+        self.present_queue_family
     }
     
     pub fn destroy(&self){
