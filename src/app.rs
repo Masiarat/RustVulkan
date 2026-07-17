@@ -9,8 +9,8 @@ const WINDOW_WIDTH: u32 = 800;
 const WINDOW_HEIGHT: u32 = 600;
 
 pub struct App {
-    window: Option<Window>,
     renderer: Option<Renderer>,
+    window: Option<Window>,
     frame_number: RefCell<usize>,
 }
 
@@ -36,7 +36,7 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         let mut frame_number = self.frame_number.borrow_mut();
         *frame_number += 1;
         let log_message = format!("Frame number: {}", *frame_number);

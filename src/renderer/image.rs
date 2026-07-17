@@ -25,5 +25,5 @@ pub fn transition_image(context: &Context, command_buffer: vk::CommandBuffer, im
     let dependency_info = vk::DependencyInfo::default()
         .image_memory_barriers(&barriers);
 
-    unsafe { context.device().cmd_pipeline_barrier2(command_buffer, &dependency_info) }
+    unsafe { context.device.cmd_pipeline_barrier2(command_buffer, &dependency_info) }
 }

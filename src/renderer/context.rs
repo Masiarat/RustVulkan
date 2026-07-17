@@ -8,16 +8,16 @@ use winit::window::Window;
 
 const DEFAULT_PHYSICAL_DEVICE: usize = 0;
 
-pub struct Context{
+pub(crate) struct Context{
     entry: Entry,
-    instance: Instance,
+    pub(crate) instance: Instance,
     debug: DebugMessenger,
-    surface: vk::SurfaceKHR,
-    surface_loader: surface::Instance,
-    physical_device: vk::PhysicalDevice,
-    device: Device,
-    present_queue: vk::Queue,
-    present_queue_family: u32,
+    pub(crate) surface: vk::SurfaceKHR,
+    pub(crate) surface_loader: surface::Instance,
+    pub(crate) physical_device: vk::PhysicalDevice,
+    pub(crate) present_queue: vk::Queue,
+    pub(crate) present_queue_family: u32,
+    pub(crate) device: Device,
 }
 
 fn create_instance(entry: &Entry, window: &Window) -> Result<Instance, vk::Result> {
@@ -123,28 +123,8 @@ impl Context{
 
         Context{ entry, instance, debug, surface, surface_loader, physical_device, device, present_queue, present_queue_family }
     }
-
-    pub fn present_queue(&self) -> vk::Queue {
-        self.present_queue
-    }
-    pub fn device(&self) -> &Device {
-        &self.device
-    }
-    pub fn instance(&self) -> &Instance {
-        &self.instance
-    }
-    pub fn surface_loader(&self) -> &surface::Instance {
-        &self.surface_loader
-    }
-    pub fn surface(&self) -> vk::SurfaceKHR {
-        self.surface
-    }
-    pub fn physical_device(&self) -> vk::PhysicalDevice {
-        self.physical_device
-    }
-    pub fn present_queue_family(&self) -> u32 {
-        self.present_queue_family
-    }
+    
+    //TODO change to public fields
     
     pub fn destroy(&self){
         unsafe {

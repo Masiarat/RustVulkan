@@ -24,7 +24,7 @@ pub struct Renderer{
 impl Renderer{
 
     fn current_frame(&self, frame_number: usize) -> &Frame{
-        &self.frames[ frame_number % FRAME_COUNT]
+        &self.frames[ frame_number % FRAME_COUNT ]
     }
 
     pub fn new(window_width: u32, window_height: u32, window: &Window) -> Renderer{
@@ -38,9 +38,9 @@ impl Renderer{
 
     pub fn draw(&self, frame_number: usize) -> Result<(), vk::Result>{
         let current_frame = self.current_frame(frame_number);
-        
-        unsafe {self.context.device().wait_for_fences(&[current_frame.render_fence()], true, ONE_SECOND.as_nanos() as u64)? }
-        unsafe { self.context.device().reset_fences(&[current_frame.render_fence()])? };
+
+        unsafe {self.context.device.wait_for_fences(&[current_frame.render_fence()], true, ONE_SECOND.as_nanos() as u64)? }
+        unsafe { self.context.device.reset_fences(&[current_frame.render_fence()])? };
 
         let (swap_chain_image_index, _) = unsafe {
             self.swap_chain.swap_chain_loader().acquire_next_image(
@@ -52,10 +52,10 @@ impl Renderer{
         let current_swap_chain_image = self.swap_chain.swap_chain_images()[swap_chain_image_index as usize];
 
         let command_buffer = current_frame.main_command_buffer();
-        unsafe { self.context.device().reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())? };
+        unsafe { self.context.device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())? };
 
         let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        unsafe { self.context.device().begin_command_buffer(command_buffer, &command_buffer_begin_info)?; }
+        unsafe { self.context.device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?; }
 
         image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
@@ -68,12 +68,12 @@ impl Renderer{
             .base_array_layer(0)
             .layer_count(vk::REMAINING_ARRAY_LAYERS)
             .aspect_mask(vk::ImageAspectFlags::COLOR);
-;
-        unsafe { self.context.device().cmd_clear_color_image(command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, &clear_color_value, &[clear_range]) }
+
+        unsafe { self.context.device.cmd_clear_color_image(command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, &clear_color_value, &[clear_range]) }
 
         image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, vk::ImageLayout::PRESENT_SRC_KHR);
 
-        unsafe { self.context.device().end_command_buffer(command_buffer)? };
+        unsafe { self.context.device.end_command_buffer(command_buffer)? };
 
         let command_buffer_submit_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
         let wait_info = vk::SemaphoreSubmitInfo::default()
@@ -93,24 +93,31 @@ impl Renderer{
             .signal_semaphore_infos(s_infos)
             .command_buffer_infos(cmb_infos);
 
-        unsafe { self.context.device().queue_submit2(self.context.present_queue(), &[submit_info], current_frame.render_fence())? };
-        
+        unsafe { self.context.device.queue_submit2(self.context.present_queue, &[submit_info], current_frame.render_fence())? };
+
         let swap_chains = &[self.swap_chain.swap_chain()];
         let wait_semaphores = &[current_swap_chain_image.render_finished];
-        let image_indices = &[swap_chain_image_index as u32];
+        let image_indices = &[swap_chain_image_index];
         let present_info = vk::PresentInfoKHR::default()
             .swapchains(swap_chains)
             .wait_semaphores(wait_semaphores)
             .image_indices(image_indices);
-        
-        unsafe { self.swap_chain.swap_chain_loader().queue_present(self.context.present_queue(), &present_info)? };
-        
+
+        unsafe { self.swap_chain.swap_chain_loader().queue_present(self.context.present_queue, &present_info)? };
+
         Ok(())
     }
 }
 
 impl Drop for Renderer{
     fn drop(&mut self) {
+        unsafe {
+            self.context
+                .device
+                .device_wait_idle()
+                .expect("Failed to wait for Vulkan device");
+        }
+
         for frame in &self.frames{
             frame.destroy(&self.context);
         }
