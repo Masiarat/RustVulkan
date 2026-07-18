@@ -11,7 +11,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     _user_data: *mut std::os::raw::c_void,
 ) -> vk::Bool32 { unsafe {
     let callback_data = *p_callback_data;
-    let message_id_number = callback_data.message_id_number;
+    // let message_id_number = callback_data.message_id_number;
 
     let message_id_name = if callback_data.p_message_id_name.is_null() {
         Cow::from("")
@@ -70,8 +70,8 @@ impl DebugMessenger {
         };
         Ok ( DebugMessenger{debug_loader, debug_messenger } )
     }
-    
-    
+
+
     pub unsafe fn destroy(&self) { unsafe {
         self.debug_loader.destroy_debug_utils_messenger(self.debug_messenger, None);
     }}

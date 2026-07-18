@@ -150,7 +150,6 @@ fn create_allocator(instance: Instance, physical_device: vk::PhysicalDevice, dev
 }
 
 impl Drop for SharedContext{
-    //todo free allocator
     fn drop(&mut self) {
         unsafe {
             self.device

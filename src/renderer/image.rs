@@ -1,4 +1,5 @@
 use crate::renderer::context::SharedContext;
+use ash::vk::{CommandBuffer, Extent2D, Offset3D};
 use ash::{vk, Device};
 use gpu_allocator::vulkan::{Allocation, AllocationScheme, Allocator};
 use gpu_allocator::MemoryLocation;
@@ -7,28 +8,39 @@ use std::sync::Arc;
 
 struct Image {
     image: vk::Image,
+    image_view: vk::ImageView,
     allocation: Option<Allocation>,
+    extent: Extent2D,
 
     context: Arc<SharedContext>
 }
 
 impl Image {
-    pub fn new_display(window_width: u32, window_height: u32, name: &str, device: &Device, context: Arc<SharedContext>) -> Result<Image, Box<dyn Error>>{
-        let extent = vk::Extent3D { width: window_width, height: window_height, depth: 1 };
+
+    pub fn copy_to(&self, command_buffer: CommandBuffer, other: vk::Image, other_extent: vk::Extent2D){
+        cpy_image_to_image(&self.context.device, command_buffer, self.image, other, self.extent, other_extent)
+    }
+
+    pub fn new_display(extent: Extent2D, name: &str, device: &Device, context: Arc<SharedContext>) -> Result<Image, Box<dyn Error>>{
+        let extent3d = vk::Extent3D::from(extent);
         let format = vk::Format::R16G16B16A16_SFLOAT;
         let usage = vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::STORAGE
             | vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
-        let image_create_info = vk::ImageCreateInfo::from(StandardImageCreateInfo{format, usage, extent});
+        let image_create_info = vk::ImageCreateInfo::from(StandardImageCreateInfo{format, usage, extent: extent3d });
         let image = unsafe { device.create_image(&image_create_info, None)? };
 
         let allocation = context.with_allocator(|allocator| {
             Self::allocate(device, allocator, image, name, MemoryLocation::GpuOnly)
         })?;
 
-        Ok( Image { image, allocation: Some(allocation), context } )
+        let image_view_create_info = vk::ImageViewCreateInfo::from(
+            StandardImageViewCreateInfo{format, image, aspect_flags: vk::ImageAspectFlags::COLOR});
+        let image_view = unsafe { device.create_image_view(&image_view_create_info, None)? };
+
+        Ok( Image { image, image_view, allocation: Some(allocation), extent, context } )
     }
 
     fn allocate(device: &Device, allocator: &mut Allocator, image: vk::Image, name: &str, location: MemoryLocation) -> Result<Allocation, Box<dyn Error>>{
@@ -45,11 +57,13 @@ impl Image {
 
         Ok(allocation)
     }
+
 }
 
 impl Drop for Image{
     fn drop(&mut self) {
         println!("Freeing image allocation");
+        unsafe { self.context.device.destroy_image_view(self.image_view, None) };
         self.context.allocator.lock().as_mut().expect("Allocator mutex poisoned").as_mut().expect("Allocator was invalid")
             .free(self.allocation.take().expect("Allocation was invalid"))
             .expect("Failed to free image allocation");
@@ -83,6 +97,61 @@ pub fn transition_image(context: &SharedContext, command_buffer: vk::CommandBuff
         .image_memory_barriers(&barriers);
 
     unsafe { context.device.cmd_pipeline_barrier2(command_buffer, &dependency_info) }
+}
+
+pub fn cpy_image_to_image(device: &Device, command_buffer: CommandBuffer, src_image: vk::Image, dst_image: vk::Image, src_extent: vk::Extent2D, dst_extent: vk::Extent2D){
+    let blit_region = vk::ImageBlit2::default()
+        .src_offsets(to_offset_zero(src_extent))
+        .dst_offsets(to_offset_zero(dst_extent))
+        .src_subresource(vk::ImageSubresourceLayers::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .base_array_layer(0)
+            .layer_count(1)
+            .mip_level(0))
+        .dst_subresource(vk::ImageSubresourceLayers::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .layer_count(1)
+            .base_array_layer(0));
+
+    let regions = [blit_region];
+    let blit_info = vk::BlitImageInfo2::default()
+        .dst_image(dst_image)
+        .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+        .src_image(src_image)
+        .dst_image_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+        .filter(vk::Filter::LINEAR)
+        .regions(&regions);
+
+    unsafe { device.cmd_blit_image2(command_buffer, &blit_info) }
+}
+
+fn to_offset_zero(src_extent: Extent2D) -> [Offset3D; 2] {
+    [
+        Offset3D::default().x(0).y(0).z(0),
+        Offset3D::default().x(src_extent.width as i32).y(src_extent.height as i32).z(1),
+    ]
+}
+
+struct StandardImageViewCreateInfo {
+    format: vk::Format,
+    image: vk::Image,
+    aspect_flags: vk::ImageAspectFlags,
+}
+
+impl From<StandardImageViewCreateInfo> for vk::ImageViewCreateInfo<'_> {
+    fn from(value: StandardImageViewCreateInfo) -> Self {
+        vk::ImageViewCreateInfo::default()
+            .image(value.image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(value.format)
+            .subresource_range(vk::ImageSubresourceRange::default()
+                .aspect_mask(value.aspect_flags)
+                .base_mip_level(0)
+                .level_count(1)
+                .base_array_layer(0)
+                .layer_count(1)
+            )
+    }
 }
 
 struct StandardImageCreateInfo {
