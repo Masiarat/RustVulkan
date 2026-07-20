@@ -1,5 +1,6 @@
 use crate::renderer::context::SharedContext;
 use crate::renderer::frame::Frame;
+use crate::renderer::image::Image;
 use crate::renderer::swap_chain::SwapChain;
 use ash::vk;
 use std::sync::Arc;
@@ -14,10 +15,13 @@ mod swap_chain;
 mod frame;
 mod image;
 pub mod util;
+mod pipeline;
+mod descriptor;
 
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
 pub struct Renderer{
+    draw_image: Image,
     frames: Vec<Frame>,
     swap_chain: SwapChain,
     context: Arc<SharedContext>,
@@ -35,7 +39,9 @@ impl Renderer{
         let frames = (0..FRAME_COUNT).map(
             |_| Frame::new(context.clone()).expect("Failed to create frame!")
         ).collect();
-        Renderer { context, swap_chain, frames}
+        let draw_image = Image::new_display(context.clone(), vk::Extent2D{width: window_width, height: window_height}, "draw_image").expect("Failed to create draw Image");
+
+        Renderer { draw_image, context, swap_chain, frames }
     }
 
     pub fn draw(&self, frame_number: usize) -> Result<(), vk::Result>{
@@ -59,21 +65,20 @@ impl Renderer{
         let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { self.context.device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?; }
 
-        image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+        // image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+        self.draw_image.transition_layout(command_buffer, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
         let flash = (frame_number as f32 / 120.0).sin().abs();
-        let clear_color_value = vk::ClearColorValue{ float32: [0.0, 0.0, flash, 0.0] };
+        let color = vk::ClearColorValue { float32: [0.0, 0.0, flash, 0.0] };
 
-        let clear_range = vk::ImageSubresourceRange::default()
-            .base_mip_level(0)
-            .level_count(vk::REMAINING_MIP_LEVELS)
-            .base_array_layer(0)
-            .layer_count(vk::REMAINING_ARRAY_LAYERS)
-            .aspect_mask(vk::ImageAspectFlags::COLOR);
+        self.draw_image.clear_color(command_buffer, color);
 
-        unsafe { self.context.device.cmd_clear_color_image(command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, &clear_color_value, &[clear_range]) }
+        self.draw_image.transition_layout(command_buffer, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        current_swap_chain_image.transition_image(&self.context, command_buffer, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
 
-        image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::GENERAL, vk::ImageLayout::PRESENT_SRC_KHR);
+        self.draw_image.copy_to(command_buffer, current_swap_chain_image.image, self.swap_chain.image_extent);
+
+        current_swap_chain_image.transition_image(&self.context, command_buffer, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
 
         unsafe { self.context.device.end_command_buffer(command_buffer)? };
 
@@ -109,4 +114,6 @@ impl Renderer{
 
         Ok(())
     }
+
+
 }

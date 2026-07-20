@@ -1,4 +1,5 @@
 use crate::renderer::context::SharedContext;
+use crate::renderer::image::{transition_image, StandardImageViewCreateInfo};
 use ash::khr::swapchain;
 use ash::vk;
 use itertools::izip;
@@ -10,8 +11,8 @@ pub struct SwapChain {
 
     pub(crate) swapchain_images: Vec<SwapChainImage>,
 
-    image_format: vk::Format,
-    image_extent: vk::Extent2D,
+    pub(crate) image_format: vk::Format,
+    pub(crate) image_extent: vk::Extent2D,
 
     context: Arc<SharedContext>
 }
@@ -19,17 +20,8 @@ pub struct SwapChain {
 impl SwapChain {
     fn create_image_views(context: &SharedContext, images: &[vk::Image], image_format: vk::Format) -> Result<Vec<vk::ImageView>, vk::Result>{
         let image_views: Vec<vk::ImageView> = images.iter().map(|&image| {
-            let image_view_create_info = vk::ImageViewCreateInfo::default()
-                .image(image)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(image_format)
-                .components(vk::ComponentMapping::default())
-                .subresource_range(
-                    vk::ImageSubresourceRange::default()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .level_count(1)
-                        .layer_count(1)
-                );
+            let image_view_create_info = vk::ImageViewCreateInfo::from(
+                StandardImageViewCreateInfo{format: image_format, image, aspect_flags: vk::ImageAspectFlags::COLOR});
             unsafe { context.device.create_image_view(&image_view_create_info, None) }
         }).collect::<Result<Vec<_>, _>>()?;
         Ok( image_views )
@@ -138,4 +130,10 @@ pub(crate) struct SwapChainImage {
     pub(crate) image: vk::Image,
     pub(crate) image_view: vk::ImageView,
     pub(crate) render_finished: vk::Semaphore
+}
+
+impl SwapChainImage {
+    pub fn transition_image(&self, context: &SharedContext, command_buffer: vk::CommandBuffer, current_layout: vk::ImageLayout, new_layout: vk::ImageLayout){
+        transition_image(context, command_buffer, self.image, current_layout, new_layout)
+    }
 }
