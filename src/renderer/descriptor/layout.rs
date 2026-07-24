@@ -1,15 +1,15 @@
 use ash::{vk, Device};
 
-struct DescriptorLayoutBuilder{
+pub struct LayoutBuilder {
     bindings: Vec<vk::DescriptorSetLayoutBinding<'static>>
 }
 
-impl DescriptorLayoutBuilder{
-    fn new() -> DescriptorLayoutBuilder{
-        DescriptorLayoutBuilder { bindings: Vec::new() }
+impl LayoutBuilder {
+    pub fn new() -> LayoutBuilder {
+        LayoutBuilder { bindings: Vec::new() }
     }
 
-    fn build(&mut self, device: &Device, shader_stages: vk::ShaderStageFlags, flags: vk::DescriptorSetLayoutCreateFlags) -> Result<vk::DescriptorSetLayout, vk::Result>{
+    pub unsafe fn build(&mut self, device: &Device, shader_stages: vk::ShaderStageFlags, flags: vk::DescriptorSetLayoutCreateFlags) -> Result<vk::DescriptorSetLayout, vk::Result>{
         for binding in self.bindings.iter_mut(){
             binding.stage_flags |= shader_stages;
         }
@@ -18,10 +18,11 @@ impl DescriptorLayoutBuilder{
             .bindings(&self.bindings)
             .flags(flags);
 
+        //TODO make sure to free this
         unsafe{ device.create_descriptor_set_layout(&descriptor_layout_info, None) }
     }
 
-    fn add_binding(&mut self, binding: u32, descriptor_type: vk::DescriptorType){
+    pub fn add_binding(&mut self, binding: u32, descriptor_type: vk::DescriptorType){
         let new_binding = vk::DescriptorSetLayoutBinding::default()
             .binding(binding)
             .descriptor_type(descriptor_type)

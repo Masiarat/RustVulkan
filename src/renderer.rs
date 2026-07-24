@@ -1,9 +1,13 @@
+use crate::app::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::renderer::context::SharedContext;
+use crate::renderer::descriptor::PoolSizeRatio;
 use crate::renderer::frame::Frame;
 use crate::renderer::image::Image;
+use crate::renderer::pipeline::load_shader_module;
 use crate::renderer::swap_chain::SwapChain;
 use ash::vk;
-use std::sync::Arc;
+use std::cell::Cell;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::window::Window;
 
@@ -21,6 +25,11 @@ mod descriptor;
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
 pub struct Renderer{
+    gradient_pipeline: Cell<vk::Pipeline>,
+    gradient_pipeline_layout: Cell<vk::PipelineLayout>,
+    draw_image_descriptor: Cell<vk::DescriptorSet>,
+    draw_image_descr_layout: Cell<vk::DescriptorSetLayout>,
+    descriptor_allocator: Mutex<descriptor::Allocator>,
     draw_image: Image,
     frames: Vec<Frame>,
     swap_chain: SwapChain,
@@ -41,8 +50,67 @@ impl Renderer{
         ).collect();
         let draw_image = Image::new_display(context.clone(), vk::Extent2D{width: window_width, height: window_height}, "draw_image").expect("Failed to create draw Image");
 
-        Renderer { draw_image, context, swap_chain, frames }
+        let sizes = vec![PoolSizeRatio{ ty: vk::DescriptorType::STORAGE_IMAGE , ratio: 1.0 }];
+        let descr_alloc = descriptor::Allocator::new(context.clone(), 10, &sizes).expect("Failed to create descriptor allocator");
+
+        let mut renderer = Renderer { gradient_pipeline: Cell::new(Default::default()), gradient_pipeline_layout: Cell::new(Default::default()), draw_image_descriptor: Cell::default(), draw_image, context, swap_chain, frames, descriptor_allocator: Mutex::new(descr_alloc), draw_image_descr_layout: Cell::default() };
+        renderer.init();
+        renderer
     }
+
+    pub fn init(&mut self){
+        self.init_descriptors();
+        self.init_pipelines()
+    }
+
+    pub fn init_descriptors(&mut self){
+        let mut builder = descriptor::LayoutBuilder::new();
+        builder.add_binding(0, vk::DescriptorType::STORAGE_IMAGE);
+        self.draw_image_descr_layout =  Cell::from( unsafe{ builder.build(&self.context.device, vk::ShaderStageFlags::COMPUTE, vk::DescriptorSetLayoutCreateFlags::empty()).expect("Failed to create descriptor layout") } );
+
+        self.draw_image_descriptor = Cell::from ( self.descriptor_allocator.get_mut().unwrap().allocate(self.draw_image_descr_layout.get()).expect("Failed to allocate descriptor") );
+
+        let image_info = vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(self.draw_image.image_view);
+
+        let image_infos = &[image_info];
+        let draw_image_write = vk::WriteDescriptorSet::default()
+            .dst_binding(0)
+            .dst_set(self.draw_image_descriptor.get())
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .image_info(image_infos);
+
+        unsafe { self.context.device.update_descriptor_sets(&[draw_image_write], &[]) }
+    }
+
+    pub fn init_pipelines(&mut self){
+        self.init_background_pipelines();
+    }
+
+    pub fn init_background_pipelines(&mut self){
+        let descriptor_layouts = &[self.draw_image_descr_layout.get()];
+        let compute_layout = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(descriptor_layouts);
+
+        self.gradient_pipeline_layout = Cell::from( unsafe{ self.context.device.create_pipeline_layout(&compute_layout, None).expect("Failed to create pipeline layout") } );
+
+        let compute_draw_shader = unsafe{ load_shader_module(&self.context.device, concat!(env!("OUT_DIR"), "/gradient.spv").as_ref()).expect("Failed to load shader") };
+
+        let stage_info = vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::COMPUTE)
+            .module(compute_draw_shader)
+            .name(c"main");
+
+        let compute_draw_pipeline_info = vk::ComputePipelineCreateInfo::default()
+            .stage(stage_info)
+            .layout(self.gradient_pipeline_layout.get());
+
+        self.gradient_pipeline = Cell::from( unsafe{ self.context.device.create_compute_pipelines(vk::PipelineCache::null(), &[compute_draw_pipeline_info], None).expect("Failed to create compute pipeline")[0] } );
+        unsafe { self.context.device.destroy_shader_module(compute_draw_shader, None) };
+    }
+
 
     pub fn draw(&self, frame_number: usize) -> Result<(), vk::Result>{
         let current_frame = self.current_frame(frame_number);
@@ -68,10 +136,15 @@ impl Renderer{
         // image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
         self.draw_image.transition_layout(command_buffer, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
-        let flash = (frame_number as f32 / 120.0).sin().abs();
-        let color = vk::ClearColorValue { float32: [0.0, 0.0, flash, 0.0] };
+        unsafe { self.context.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline.get()) };
 
-        self.draw_image.clear_color(command_buffer, color);
+        unsafe { self.context.device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline_layout.get(), 0, &[self.draw_image_descriptor.get()], &[]) };
+
+        unsafe { self.context.device.cmd_dispatch(command_buffer, (WINDOW_WIDTH as f32 / 16.0).ceil() as u32, (WINDOW_HEIGHT as f32 / 16.0).ceil() as u32, 1) };
+        // let flash = (frame_number as f32 / 120.0).sin().abs();
+        // let color = vk::ClearColorValue { float32: [0.0, 0.0, flash, 0.0] };
+        //
+        // self.draw_image.clear_color(command_buffer, color);
 
         self.draw_image.transition_layout(command_buffer, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
         current_swap_chain_image.transition_image(&self.context, command_buffer, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
@@ -114,6 +187,17 @@ impl Renderer{
 
         Ok(())
     }
+}
 
+impl Drop for Renderer{
+    fn drop(&mut self) {
+        unsafe {
+            self.context.device
+                .device_wait_idle()
+                .expect("Failed to wait for device idle");
 
+            self.context.device.destroy_pipeline(self.gradient_pipeline.get(), None);
+            self.context.device.destroy_pipeline_layout(self.gradient_pipeline_layout.get(), None);
+        }
+    }
 }

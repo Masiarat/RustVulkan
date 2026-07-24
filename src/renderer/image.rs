@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 pub struct Image {
     image: vk::Image,
-    image_view: vk::ImageView,
+    pub image_view: vk::ImageView,
     allocation: Option<Allocation>,
     extent: vk::Extent2D,
 
@@ -79,7 +79,7 @@ impl Image {
 
 impl Drop for Image{
     fn drop(&mut self) {
-        println!("Freeing image allocation");
+        println!("Destroying image view");
         unsafe { self.context.device.destroy_image_view(self.image_view, None) };
         self.context.allocator.lock().as_mut().expect("Allocator mutex poisoned").as_mut().expect("Allocator was invalid")
             .free(self.allocation.take().expect("Allocation was invalid"))

@@ -152,10 +152,6 @@ fn create_allocator(instance: Instance, physical_device: vk::PhysicalDevice, dev
 impl Drop for SharedContext{
     fn drop(&mut self) {
         unsafe {
-            self.device
-                .device_wait_idle()
-                .expect("Failed to wait for device idle");
-
             println!("Destroying allocator");
             drop(self.allocator.lock().unwrap().take());
             println!("Destroying device");

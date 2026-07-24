@@ -110,10 +110,6 @@ impl SwapChain {
 impl Drop for SwapChain {
     fn drop(&mut self) {
         unsafe {
-            self.context.device
-                .device_wait_idle()
-                .expect("Failed to wait for device idle");
-
             println!("Destroying image_views and semaphores...");
             for image in &self.swapchain_images {
                 self.context.device.destroy_image_view(image.image_view, None);

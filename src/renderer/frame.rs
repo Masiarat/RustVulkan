@@ -40,11 +40,6 @@ impl Frame {
 impl Drop for Frame {
     fn drop(&mut self) {
         unsafe {
-            self.context.device
-                .device_wait_idle()
-                .expect("Failed to wait for device idle");
-
-
             self.context.device.device_wait_idle().expect("Idle device failed!");
             self.context.device.destroy_command_pool(self.command_pool, None);
 
