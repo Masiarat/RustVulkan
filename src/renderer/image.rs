@@ -46,17 +46,18 @@ impl Image {
             | vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
         let image_create_info = vk::ImageCreateInfo::from(util::StandardImageCreateInfo{format, usage, extent: extent3d });
-        let image = unsafe { context.device.create_image(&image_create_info, None)? };
+        let device = &context.device;
+        let image = unsafe { device.create_image(&image_create_info, None)? };
 
         let allocation = context.with_allocator(|allocator| {
-            Self::allocate(&context.device, allocator, image, name, MemoryLocation::GpuOnly)
+            Self::allocate(device, allocator, image, name, MemoryLocation::GpuOnly)
         })?;
 
-        unsafe { context.device.bind_image_memory(image, allocation.memory(), allocation.offset())? };
+        unsafe { device.bind_image_memory(image, allocation.memory(), allocation.offset())? };
 
         let image_view_create_info = vk::ImageViewCreateInfo::from(
             util::StandardImageViewCreateInfo{format, image, aspect_flags: vk::ImageAspectFlags::COLOR});
-        let image_view = unsafe { context.device.create_image_view(&image_view_create_info, None)? };
+        let image_view = unsafe { device.create_image_view(&image_view_create_info, None)? };
 
         Ok( Image { image, image_view, allocation: Some(allocation), extent, context } )
     }
@@ -81,12 +82,13 @@ impl Image {
 impl Drop for Image{
     fn drop(&mut self) {
         println!("Destroying image view");
-        unsafe { self.context.device.destroy_image_view(self.image_view, None) };
+        let device = &self.context.device;
+        unsafe { device.destroy_image_view(self.image_view, None) };
         self.context.allocator.lock().as_mut().expect("Allocator mutex poisoned").as_mut().expect("Allocator was invalid")
             .free(self.allocation.take().expect("Allocation was invalid"))
             .expect("Failed to free image allocation");
         println!("Destroying image");
-        unsafe { self.context.device.destroy_image(self.image, None) };
+        unsafe { device.destroy_image(self.image, None) };
     }
 }
 

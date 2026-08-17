@@ -46,11 +46,12 @@ impl Drop for Allocator{
     fn drop(&mut self) {
         unsafe {
             println!("Destroying descriptor set layouts");
+            let device = &self.context.device;
             for layout in self.allocated_layouts.iter(){
-                self.context.device.destroy_descriptor_set_layout(*layout, None);
+                device.destroy_descriptor_set_layout(*layout, None);
             }
             println!("Destroying descriptor pool");
-            self.context.device.destroy_descriptor_pool(self.pool, None);
+            device.destroy_descriptor_pool(self.pool, None);
         }
     }
 }

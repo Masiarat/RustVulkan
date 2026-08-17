@@ -29,12 +29,13 @@ impl SwapChain {
     }
 
     fn query_create_info(window_width: u32, window_height: u32, context: &SharedContext) -> Result<(vk::SwapchainCreateInfoKHR<'static>, vk::Format, vk::Extent2D), vk::Result> {
+        let surface_loader = &context.surface_loader;
         let surface_format = unsafe{
-            context.surface_loader.get_physical_device_surface_formats(context.physical_device, context.surface)?[0]
+            surface_loader.get_physical_device_surface_formats(context.physical_device, context.surface)?[0]
         };
 
         let surface_capabilities = unsafe{
-            context.surface_loader.get_physical_device_surface_capabilities(context.physical_device, context.surface)?
+            surface_loader.get_physical_device_surface_capabilities(context.physical_device, context.surface)?
         };
 
         let mut desired_image_count = surface_capabilities.min_image_count + 1;
@@ -59,7 +60,7 @@ impl SwapChain {
                 surface_capabilities.current_transform
             };
 
-        let present_modes = unsafe { context.surface_loader
+        let present_modes = unsafe { surface_loader
             .get_physical_device_surface_present_modes(context.physical_device, context.surface)?
         };
         let present_mode = present_modes
