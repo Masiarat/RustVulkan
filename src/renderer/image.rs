@@ -45,7 +45,7 @@ impl Image {
             | vk::ImageUsageFlags::STORAGE
             | vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
-        let image_create_info = vk::ImageCreateInfo::from(util::StandardImageCreateInfo{format, usage, extent: extent3d });
+        let image_create_info = util::standard_image_create_info(format, usage, extent3d);
         let device = &context.device;
         let image = unsafe { device.create_image(&image_create_info, None)? };
 
@@ -55,8 +55,7 @@ impl Image {
 
         unsafe { device.bind_image_memory(image, allocation.memory(), allocation.offset())? };
 
-        let image_view_create_info = vk::ImageViewCreateInfo::from(
-            util::StandardImageViewCreateInfo{format, image, aspect_flags: vk::ImageAspectFlags::COLOR});
+        let image_view_create_info = util::standard_image_view_create_info(format, image, vk::ImageAspectFlags::COLOR);
         let image_view = unsafe { device.create_image_view(&image_view_create_info, None)? };
 
         Ok( Image { image, image_view, allocation: Some(allocation), extent, context } )
@@ -93,8 +92,7 @@ impl Drop for Image{
 }
 
 pub fn transition_image(context: &SharedContext, command_buffer: vk::CommandBuffer, image: vk::Image, current_layout: vk::ImageLayout, new_layout: vk::ImageLayout){
-    let image_memory_barrier = vk::ImageMemoryBarrier2::from(
-        util::StandardImageMemoryBarrier2{image, src_layout: current_layout, dst_layout: new_layout});
+    let image_memory_barrier = util::standard_image_memory_barrier2(image, current_layout, new_layout);
 
     let barriers = [image_memory_barrier];
     let dependency_info = vk::DependencyInfo::default()
@@ -104,7 +102,7 @@ pub fn transition_image(context: &SharedContext, command_buffer: vk::CommandBuff
 }
 
 pub fn cpy_image_to_image(device: &Device, command_buffer: CommandBuffer, src_image: vk::Image, dst_image: vk::Image, src_extent: vk::Extent2D, dst_extent: vk::Extent2D){
-    let blit_region = vk::ImageBlit2::from(util::StandardCopyImageBlit {src_extent, dst_extent});
+    let blit_region = util::standard_copy_image_blit(src_extent, dst_extent);
 
     let regions = [blit_region];
     let blit_info = vk::BlitImageInfo2::default()

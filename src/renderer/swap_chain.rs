@@ -21,8 +21,7 @@ pub struct SwapChain {
 impl SwapChain {
     fn create_image_views(context: &SharedContext, images: &[vk::Image], image_format: vk::Format) -> Result<Vec<vk::ImageView>, vk::Result>{
         let image_views: Vec<vk::ImageView> = images.iter().map(|&image| {
-            let image_view_create_info = vk::ImageViewCreateInfo::from(
-                util::StandardImageViewCreateInfo{format: image_format, image, aspect_flags: vk::ImageAspectFlags::COLOR});
+            let image_view_create_info = util::standard_image_view_create_info(image_format, image, vk::ImageAspectFlags::COLOR);
             unsafe { context.device.create_image_view(&image_view_create_info, None) }
         }).collect::<Result<Vec<_>, _>>()?;
         Ok( image_views )
