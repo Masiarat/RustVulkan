@@ -1,7 +1,7 @@
 // STANDARD CREATE INFOS
 
 use ash::vk;
-use ash::vk::Offset3D;
+use ash::vk::{CommandBufferBeginInfo, CommandBufferSubmitInfo, Offset3D, SemaphoreSubmitInfo};
 
 pub fn to_offset_zero(src_extent: vk::Extent2D) -> [Offset3D; 2] {
     [
@@ -91,3 +91,17 @@ pub fn standard_image_create_info(format: vk::Format, usage: vk::ImageUsageFlags
         .extent(extent)
 }
 
+pub fn standard_command_buffer_begin_info(flags: vk::CommandBufferUsageFlags) -> CommandBufferBeginInfo<'static> {
+    vk::CommandBufferBeginInfo::default().flags(flags)
+}
+
+pub fn standard_command_buffer_submit_info(command_buffer: vk::CommandBuffer) -> vk::CommandBufferSubmitInfo<'static> {
+    vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
+}
+
+pub fn standard_submit_info<'a>(w_infos: &'a[SemaphoreSubmitInfo], s_infos: &'a[SemaphoreSubmitInfo], cmb_infos: &'a[CommandBufferSubmitInfo]) -> vk::SubmitInfo2<'a>{
+    vk::SubmitInfo2::default()
+        .wait_semaphore_infos(w_infos)
+        .signal_semaphore_infos(s_infos)
+        .command_buffer_infos(cmb_infos)
+}

@@ -5,6 +5,7 @@ use crate::renderer::frame::Frame;
 use crate::renderer::image::Image;
 use crate::renderer::pipeline::load_shader_module;
 use crate::renderer::swap_chain::SwapChain;
+use crate::renderer::util::{standard_command_buffer_begin_info, standard_command_buffer_submit_info, standard_submit_info};
 use ash::vk;
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
@@ -134,7 +135,7 @@ impl Renderer{
         let command_buffer = current_frame.command_buffer;
         unsafe { device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())? };
 
-        let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let command_buffer_begin_info = standard_command_buffer_begin_info(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?; }
 
         // image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
@@ -159,7 +160,7 @@ impl Renderer{
 
         unsafe { device.end_command_buffer(command_buffer)? };
 
-        let command_buffer_submit_info = vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer);
+        let command_buffer_submit_info = standard_command_buffer_submit_info(command_buffer);
         let wait_info = vk::SemaphoreSubmitInfo::default()
             .semaphore(current_frame.swap_chain_semaphore)
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT_KHR)
@@ -172,10 +173,7 @@ impl Renderer{
         let w_infos = &[wait_info];
         let s_infos = &[signal_info];
         let cmb_infos = &[command_buffer_submit_info];
-        let submit_info = vk::SubmitInfo2::default()
-            .wait_semaphore_infos(w_infos)
-            .signal_semaphore_infos(s_infos)
-            .command_buffer_infos(cmb_infos);
+        let submit_info = standard_submit_info(w_infos, s_infos, cmb_infos);
 
         unsafe { device.queue_submit2(present_queue, &[submit_info], current_frame.render_fence)? };
 
@@ -188,9 +186,10 @@ impl Renderer{
             .image_indices(image_indices);
 
         unsafe { self.swap_chain.swapchain_loader.queue_present(present_queue, &present_info)? };
-
         Ok(())
     }
+
+
 }
 
 impl Drop for Renderer{
