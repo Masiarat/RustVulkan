@@ -1,5 +1,7 @@
 use crate::renderer::context::SharedContext;
+use crate::renderer::util::{StandardCommandBufferAllocateInfo, StandardCommandPoolCreateInfo};
 use ash::vk;
+use ash::vk::{CommandBufferAllocateInfo, CommandPoolCreateInfo};
 use std::sync::Arc;
 
 pub struct Frame {
@@ -14,17 +16,10 @@ pub struct Frame {
 
 impl Frame {
     pub fn new(context: Arc<SharedContext>) -> Result<Frame, vk::Result>{
-        let command_pool_create_info =
-            vk::CommandPoolCreateInfo::default()
-                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-                .queue_family_index(context.present_queue_family);
+        let command_pool_create_info = CommandPoolCreateInfo::from(StandardCommandPoolCreateInfo{queue_family_index: context.present_queue_family});
         let command_pool = unsafe { context.device.create_command_pool(&command_pool_create_info, None)? };
 
-        let command_buffer_allocate_info =
-            vk::CommandBufferAllocateInfo::default()
-                .command_pool(command_pool)
-                .command_buffer_count(1)
-                .level(vk::CommandBufferLevel::PRIMARY);
+        let command_buffer_allocate_info = CommandBufferAllocateInfo::from(StandardCommandBufferAllocateInfo{command_pool});
         let command_buffer = unsafe { context.device.allocate_command_buffers(&command_buffer_allocate_info)?[0] };
 
         let render_fence_create_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);

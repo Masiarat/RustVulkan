@@ -1,5 +1,6 @@
 use crate::renderer::context::SharedContext;
-use crate::renderer::image::{transition_image, StandardImageViewCreateInfo};
+use crate::renderer::image::transition_image;
+use crate::renderer::util;
 use ash::khr::swapchain;
 use ash::vk;
 use itertools::izip;
@@ -21,7 +22,7 @@ impl SwapChain {
     fn create_image_views(context: &SharedContext, images: &[vk::Image], image_format: vk::Format) -> Result<Vec<vk::ImageView>, vk::Result>{
         let image_views: Vec<vk::ImageView> = images.iter().map(|&image| {
             let image_view_create_info = vk::ImageViewCreateInfo::from(
-                StandardImageViewCreateInfo{format: image_format, image, aspect_flags: vk::ImageAspectFlags::COLOR});
+                util::StandardImageViewCreateInfo{format: image_format, image, aspect_flags: vk::ImageAspectFlags::COLOR});
             unsafe { context.device.create_image_view(&image_view_create_info, None) }
         }).collect::<Result<Vec<_>, _>>()?;
         Ok( image_views )
