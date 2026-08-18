@@ -19,13 +19,14 @@ impl Buffer {
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
         name: &str,
+        location: MemoryLocation,
     ) -> Result<Buffer, Box<dyn Error>> {
         let buffer_ci = standard_buffer_create_info(size, usage);
         let device = &context.device;
         let buffer = unsafe { device.create_buffer(&buffer_ci, None)? };
 
         let allocation = context.with_allocator(|allocator| {
-            Self::allocate(device, allocator, buffer, name, MemoryLocation::GpuOnly)
+            Self::allocate(device, allocator, buffer, name, location)
         })?;
 
         unsafe { device.bind_buffer_memory(buffer, allocation.memory(), allocation.offset())? };
@@ -59,6 +60,27 @@ impl Buffer {
         let allocation = allocator.allocate(&allocation_desc)?;
 
         Ok(allocation)
+    }
+
+    pub fn copy_from_slice(&mut self, data: &[u8]) -> Result<(), String> {
+        if let Some(allocation) = &mut self.allocation {
+            if let Some(mapped_slice) = allocation.mapped_slice_mut() {
+                if data.len() > mapped_slice.len() {
+                    return Err(format!(
+                        "Dane ({} bajtów) są większe niż zaalokowany bufor ({} bajtów)!",
+                        data.len(),
+                        mapped_slice.len()
+                    ));
+                }
+                // Bezpieczne kopiowanie danych do zmapowanej pamięci
+                mapped_slice[..data.len()].copy_from_slice(data);
+                Ok(())
+            } else {
+                Err("Pamięć bufora nie jest zmapowana! (Czy użyto MemoryLocation::CpuToGpu?)".to_string())
+            }
+        } else {
+            Err("Bufor nie posiada poprawnej alokacji pamięci.".to_string())
+        }
     }
 }
 

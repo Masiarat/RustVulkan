@@ -8,7 +8,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 pub struct Image {
-    image: vk::Image,
+    pub image: vk::Image,
     pub image_view: vk::ImageView,
     allocation: Option<Allocation>,
     extent: vk::Extent2D,
