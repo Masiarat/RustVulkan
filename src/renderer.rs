@@ -3,6 +3,7 @@ use crate::renderer::context::SharedContext;
 use crate::renderer::descriptor::PoolSizeRatio;
 use crate::renderer::frame::Frame;
 use crate::renderer::image::Image;
+use crate::renderer::immediate_submitter::ImmediateSubmitter;
 use crate::renderer::pipeline::load_shader_module;
 use crate::renderer::swap_chain::SwapChain;
 use crate::renderer::util::{standard_command_buffer_begin_info, standard_command_buffer_submit_info, standard_submit_info};
@@ -23,6 +24,8 @@ pub mod util;
 mod pipeline;
 mod descriptor;
 mod immediate_submitter;
+mod egui_painter;
+mod buffer;
 
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
@@ -33,6 +36,7 @@ pub struct Renderer{
     draw_image_descr_layout: Cell<vk::DescriptorSetLayout>,
     descriptor_allocator: Mutex<descriptor::Allocator>,
     draw_image: Image,
+    immediate_submitter: ImmediateSubmitter,
     frames: Vec<Frame>,
     swap_chain: SwapChain,
     context: Arc<SharedContext>,
@@ -50,12 +54,13 @@ impl Renderer{
         let frames = (0..FRAME_COUNT).map(
             |_| Frame::new(context.clone()).expect("Failed to create frame!")
         ).collect();
+        let immediate_submitter = ImmediateSubmitter::new(context.clone()).expect("Failed to create ImmediateSubmitter");
         let draw_image = Image::new_display(context.clone(), vk::Extent2D{width: window_width, height: window_height}, "draw_image").expect("Failed to create draw Image");
 
         let sizes = vec![PoolSizeRatio{ ty: vk::DescriptorType::STORAGE_IMAGE , ratio: 1.0 }];
         let descr_alloc = descriptor::Allocator::new(context.clone(), 10, &sizes).expect("Failed to create descriptor allocator");
 
-        let mut renderer = Renderer { gradient_pipeline: Cell::new(Default::default()), gradient_pipeline_layout: Cell::new(Default::default()), draw_image_descriptor: Cell::default(), draw_image, context, swap_chain, frames, descriptor_allocator: Mutex::new(descr_alloc), draw_image_descr_layout: Cell::default() };
+        let mut renderer = Renderer { gradient_pipeline: Cell::new(Default::default()), gradient_pipeline_layout: Cell::new(Default::default()), draw_image_descriptor: Cell::default(), draw_image, context, swap_chain, frames, descriptor_allocator: Mutex::new(descr_alloc), draw_image_descr_layout: Cell::default(), immediate_submitter };
         renderer.init();
         renderer
     }

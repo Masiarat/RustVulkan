@@ -10,11 +10,17 @@ pub fn to_offset_zero(src_extent: vk::Extent2D) -> [Offset3D; 2] {
     ]
 }
 
-// Convenience free functions that produce standard Vulkan CreateInfo structs.
-// These mirror the `Standard*` types and their `From` impls but allow
-// callers to build CreateInfo values directly without creating intermediate
-// wrapper structs. Keeping the original `Standard*` types preserves
-// backward compatibility with existing callers.
+pub fn standard_sampler_create_info() -> vk::SamplerCreateInfo<'static>{
+    vk::SamplerCreateInfo::default()
+        .mag_filter(vk::Filter::LINEAR)
+        .min_filter(vk::Filter::LINEAR)
+        .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+        .min_lod(0.0)
+        .max_lod(1.0)
+}
 
 pub fn standard_command_pool_create_info(queue_family_index: u32) -> vk::CommandPoolCreateInfo<'static> {
     vk::CommandPoolCreateInfo::default()
@@ -77,6 +83,12 @@ pub fn standard_image_view_create_info(format: vk::Format, image: vk::Image, asp
             .base_array_layer(0)
             .layer_count(1)
         )
+}
+
+pub fn standard_buffer_create_info(size: vk::DeviceSize, usage: vk::BufferUsageFlags) -> vk::BufferCreateInfo<'static> {
+    vk::BufferCreateInfo::default()
+        .size(size)
+        .usage(usage)
 }
 
 pub fn standard_image_create_info(format: vk::Format, usage: vk::ImageUsageFlags, extent: vk::Extent3D) -> vk::ImageCreateInfo<'static> {

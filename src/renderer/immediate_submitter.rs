@@ -52,6 +52,7 @@ impl ImmediateSubmitter{
 
 impl Drop for ImmediateSubmitter {
     fn drop(&mut self) {
+        println!("Destroying ImmediateSubmitter");
         unsafe { self.context.device.destroy_command_pool(self.command_pool, None); }
         unsafe { self.context.device.destroy_fence(self.fence, None); }
     }

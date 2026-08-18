@@ -2,7 +2,8 @@ use crate::renderer::debug_messenger::DebugMessenger;
 use ash::ext::debug_utils;
 use ash::khr::surface;
 use ash::{vk, Device, Entry, Instance};
-use gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc};
+use gpu_allocator::vulkan::{Allocation, Allocator, AllocatorCreateDesc};
+use gpu_allocator::AllocationError;
 use std::error::Error;
 use std::ffi::c_char;
 use std::sync::Mutex;
@@ -41,6 +42,12 @@ impl SharedContext {
         let mut guard = self.allocator.lock().expect("Allocator mutex poisoned");
         let allocator = guard.as_mut().expect("Allocator was invalid");
         f(allocator)
+    }
+    
+    pub fn free_allocation(&self, allocation: Allocation) -> Result<(), AllocationError> {
+        let mut guard = self.allocator.lock().expect("Allocator mutex poisoned");
+        let allocator = guard.as_mut().expect("Allocator was invalid");
+        allocator.free(allocation)
     }
 }
 

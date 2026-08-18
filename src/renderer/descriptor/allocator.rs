@@ -22,7 +22,6 @@ impl Allocator {
             .max_sets(max_sets)
             .pool_sizes(&pool_sizes);
 
-        //todo remember to free the pool
         let pool = unsafe{ context.device.create_descriptor_pool(&pool_info, None)? };
         Ok(Allocator{ context, allocated_layouts, pool })
     }
