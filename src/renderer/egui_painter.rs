@@ -4,6 +4,7 @@ use crate::renderer::descriptor::{Allocator, PoolSizeRatio};
 use crate::renderer::image::Image;
 use crate::renderer::immediate_submitter::ImmediateSubmitter;
 use crate::renderer::pipeline::{load_shader_module, PipelineBuilder};
+use crate::renderer::util::standard_sampler_create_info;
 use ash::vk;
 use std::collections::HashMap;
 use std::error::Error;
@@ -11,6 +12,10 @@ use std::ffi::CStr;
 use std::sync::Arc;
 
 pub struct EguiPainter {
+
+    pub vertex_buffer: Buffer,
+    pub index_buffer: Buffer,
+
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
 
@@ -48,20 +53,13 @@ impl EguiPainter {
         // ==========================================
         // 2. SAMPLER (Jak tekstury mają być filtrowane)
         // ==========================================
-        let sampler_info = vk::SamplerCreateInfo::default()
-            .mag_filter(vk::Filter::LINEAR)
-            .min_filter(vk::Filter::LINEAR)
-            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-            .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-            .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE);
+        let sampler_info = standard_sampler_create_info();
 
         let sampler = unsafe { device.create_sampler(&sampler_info, None)? };
 
         // ==========================================
         // 3. DESCRIPTOR ALLOCATOR & FONT DESCRIPTOR SET
         // ==========================================
-        // Inicjalizujemy alokator descriptorów (zakładam, że Twoja struktura Allocator ma metodę new)
         let mut descriptor_allocator = Allocator::new(context.clone(), 1, &[PoolSizeRatio{ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER, ratio: 1.0 }])?;
 
         // Alokujemy domyślny descriptor set (np. dla głównej czcionki egui)
@@ -149,7 +147,26 @@ impl EguiPainter {
             device.destroy_shader_module(egui_shader_module, None);
         }
 
+        // vertex buffers
+        let mut vertex_buffer = Buffer::new(
+            context.clone(),
+            32768,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            "egui_vertex_buffer",
+            gpu_allocator::MemoryLocation::CpuToGpu,
+        )?;
+
+        let mut index_buffer = Buffer::new(
+            context.clone(),
+            32768,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            "egui_index_buffer",
+            gpu_allocator::MemoryLocation::CpuToGpu,
+        )?;
+
         Ok(Self {
+            vertex_buffer,
+            index_buffer,
             pipeline_layout,
             pipeline,
             textures: HashMap::new(),
@@ -262,10 +279,188 @@ impl EguiPainter {
 
         Ok(())
     }
+
+    pub fn paint(
+        &mut self,
+        cmd: vk::CommandBuffer,
+        primitives: &[egui::ClippedPrimitive],
+        screen_size_physical: [u32; 2],
+        pixels_per_point: f32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let device = &self.context.device;
+
+        // 1. Zlicz całkowitą liczbę wierzchołków i indeksów dla tej klatki
+        let mut total_vertices = 0;
+        let mut total_indices = 0;
+        for p in primitives {
+            if let egui::epaint::Primitive::Mesh(mesh) = &p.primitive {
+                total_vertices += mesh.vertices.len();
+                total_indices += mesh.indices.len();
+            }
+        }
+
+        if total_vertices == 0 || total_indices == 0 {
+            return Ok(()); // Brak elementów do narysowania, pomijamy
+        }
+
+        // 2. Zbierz wszystkie dane do płaskich wektorów (połącz wszystkie siatki w jedną)
+        let mut all_vertices = Vec::with_capacity(total_vertices);
+        let mut all_indices = Vec::with_capacity(total_indices);
+
+        for p in primitives {
+            if let egui::epaint::Primitive::Mesh(mesh) = &p.primitive {
+                all_vertices.extend_from_slice(&mesh.vertices);
+                all_indices.extend_from_slice(&mesh.indices);
+            }
+        }
+
+        // 3. Stwórz tymczasowe bufory GPU dla wierzchołków i indeksów na tę klatkę.
+        // Uwaga na przyszłość: Dla maksymalnej wydajności te bufory powinny być trzymane
+        // w strukturze i powiększane tylko wtedy, gdy brakuje w nich miejsca.
+        let vertex_size = (all_vertices.len() * std::mem::size_of::<egui::epaint::Vertex>()) as u64;
+
+
+        let index_size = (all_indices.len() * std::mem::size_of::<u32>()) as u64;
+
+
+        // Kopiowanie danych na GPU - Egui Vertex ma atrybut #[repr(C)], więc można bezpiecznie rzutować
+        let vertices_bytes = unsafe {
+            std::slice::from_raw_parts(
+                all_vertices.as_ptr() as *const u8,
+                all_vertices.len() * std::mem::size_of::<egui::epaint::Vertex>(),
+            )
+        };
+        let indices_bytes = unsafe {
+            std::slice::from_raw_parts(
+                all_indices.as_ptr() as *const u8,
+                all_indices.len() * std::mem::size_of::<u32>(),
+            )
+        };
+
+        self.vertex_buffer.copy_from_slice(vertices_bytes)?;
+        self.index_buffer.copy_from_slice(indices_bytes)?;
+
+        // ==========================================
+        // NAGRYWANIE KOMEND RYSOWANIA
+        // ==========================================
+        unsafe {
+            // Podpinamy nasz Pipeline od Egui
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+
+            // Ustawiamy Push Constants (wymiary okna w "punktach" egui)
+            let screen_size_points = [
+                screen_size_physical[0] as f32 / pixels_per_point,
+                screen_size_physical[1] as f32 / pixels_per_point,
+            ];
+            let pc_data = std::slice::from_raw_parts(
+                screen_size_points.as_ptr() as *const u8,
+                std::mem::size_of::<[f32; 2]>(),
+            );
+            device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                pc_data,
+            );
+
+            // Dynamiczny Viewport obejmujący całe okno
+            let viewport = vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: screen_size_physical[0] as f32,
+                height: screen_size_physical[1] as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            };
+            device.cmd_set_viewport(cmd, 0, &[viewport]);
+
+            // Podpinamy bufory (korzystamy z jednego zbiorczego bufora dla wszystkich elementów)
+            device.cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer.buffer], &[0]);
+            device.cmd_bind_index_buffer(cmd, self.index_buffer.buffer, 0, vk::IndexType::UINT32);
+
+            let mut vertex_offset = 0;
+            let mut index_offset = 0;
+
+            // Rysujemy po kolei każdy prymityw (kształt) z listy
+            for p in primitives {
+                if let egui::epaint::Primitive::Mesh(mesh) = &p.primitive {
+                    // Obliczanie "Nożyczek" (Scissor) - Egui daje nam Clip Rect (gdzie ucinać rendering, np. w oknach ze scrollbarem)
+                    let clip_min_x = pixels_per_point * p.clip_rect.min.x;
+                    let clip_min_y = pixels_per_point * p.clip_rect.min.y;
+                    let clip_max_x = pixels_per_point * p.clip_rect.max.x;
+                    let clip_max_y = pixels_per_point * p.clip_rect.max.y;
+
+                    let clip_min_x = clip_min_x.clamp(0.0, screen_size_physical[0] as f32);
+                    let clip_min_y = clip_min_y.clamp(0.0, screen_size_physical[1] as f32);
+                    let clip_max_x = clip_max_x.clamp(clip_min_x, screen_size_physical[0] as f32);
+                    let clip_max_y = clip_max_y.clamp(clip_min_y, screen_size_physical[1] as f32);
+
+                    let clip_width = (clip_max_x - clip_min_x).round() as u32;
+                    let clip_height = (clip_max_y - clip_min_y).round() as u32;
+
+                    if clip_width == 0 || clip_height == 0 {
+                        // Kształt jest poza ekranem lub jest całkowicie obcięty
+                        vertex_offset += mesh.vertices.len() as i32;
+                        index_offset += mesh.indices.len() as u32;
+                        continue;
+                    }
+
+                    let scissor = vk::Rect2D {
+                        offset: vk::Offset2D {
+                            x: clip_min_x.round() as i32,
+                            y: clip_min_y.round() as i32,
+                        },
+                        extent: vk::Extent2D {
+                            width: clip_width,
+                            height: clip_height,
+                        },
+                    };
+                    device.cmd_set_scissor(cmd, 0, &[scissor]);
+
+                    // Podpinamy Descriptor Set z konkretną teksturą dla tego kształtu
+                    if let Some((_, descriptor_set)) = self.textures.get(&mesh.texture_id) {
+                        device.cmd_bind_descriptor_sets(
+                            cmd,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            self.pipeline_layout,
+                            0,
+                            &[*descriptor_set],
+                            &[],
+                        );
+
+                        // MAGIA VULKANA: Draw Indexed!
+                        device.cmd_draw_indexed(
+                            cmd,
+                            mesh.indices.len() as u32,
+                            1,
+                            index_offset,
+                            vertex_offset,
+                            0,
+                        );
+                    }
+
+                    // Przesuwamy wskaźniki (offsety) na kolejny fragment pamięci w buforze
+                    vertex_offset += mesh.vertices.len() as i32;
+                    index_offset += mesh.indices.len() as u32;
+                }
+            }
+        }
+
+        // Zauważ: `vertex_buffer` i `index_buffer` zostaną usunięte pod koniec tej funkcji (Drop).
+        // W idealnym silniku chcielibyśmy wrzucić je do jakiejś kolejki "do usunięcia po zakończeniu renderowania klatki",
+        // lub zaimplementować tzw. Resizable Buffer (o czym wspomniałem w punkcie 3).
+        // Jeśli używasz na sztywno CpuToGpu i fence na CPU po każdej klatce (lub dynamic_rendering), zadziała to poprawnie bez crashy!
+
+        Ok(())
+    }
 }
 
 impl Drop for EguiPainter {
     fn drop(&mut self) {
-        unsafe{ self.context.device.destroy_sampler(self.sampler, None) }
+        //todo look at pipeline layout
+        unsafe { self.context.device.destroy_pipeline(self.pipeline, None) }
+        unsafe { self.context.device.destroy_pipeline_layout(self.pipeline_layout, None) }
+        unsafe { self.context.device.destroy_sampler(self.sampler, None) }
     }
 }

@@ -1,6 +1,7 @@
 use crate::app::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::renderer::context::SharedContext;
 use crate::renderer::descriptor::PoolSizeRatio;
+use crate::renderer::egui_painter::EguiPainter;
 use crate::renderer::frame::Frame;
 use crate::renderer::image::Image;
 use crate::renderer::immediate_submitter::ImmediateSubmitter;
@@ -9,6 +10,7 @@ use crate::renderer::swap_chain::SwapChain;
 use crate::renderer::util::{standard_command_buffer_begin_info, standard_command_buffer_submit_info, standard_submit_info};
 use ash::vk;
 use std::cell::Cell;
+use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use winit::window::Window;
@@ -29,11 +31,12 @@ mod buffer;
 
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
-pub struct Renderer{
+pub struct Renderer {
     gradient_pipeline: Cell<vk::Pipeline>,
     gradient_pipeline_layout: Cell<vk::PipelineLayout>,
     draw_image_descriptor: Cell<vk::DescriptorSet>,
     draw_image_descr_layout: Cell<vk::DescriptorSetLayout>,
+    pub egui_painter: EguiPainter,
     descriptor_allocator: Mutex<descriptor::Allocator>,
     draw_image: Image,
     immediate_submitter: ImmediateSubmitter,
@@ -42,41 +45,42 @@ pub struct Renderer{
     context: Arc<SharedContext>,
 }
 
-impl Renderer{
-
-    fn current_frame(&self, frame_number: usize) -> &Frame{
-        &self.frames[ frame_number % FRAME_COUNT ]
+impl Renderer {
+    fn current_frame(&self, frame_number: usize) -> &Frame {
+        &self.frames[frame_number % FRAME_COUNT]
     }
 
-    pub fn new(window_width: u32, window_height: u32, window: &Window) -> Renderer{
+    pub fn new(window_width: u32, window_height: u32, window: &Window) -> Renderer {
         let context = Arc::new(SharedContext::new(window));
         let swap_chain = SwapChain::new(window_width, window_height, context.clone());
         let frames = (0..FRAME_COUNT).map(
             |_| Frame::new(context.clone()).expect("Failed to create frame!")
         ).collect();
         let immediate_submitter = ImmediateSubmitter::new(context.clone()).expect("Failed to create ImmediateSubmitter");
-        let draw_image = Image::new_display(context.clone(), vk::Extent2D{width: window_width, height: window_height}, "draw_image").expect("Failed to create draw Image");
+        let draw_image = Image::new_display(context.clone(), vk::Extent2D { width: window_width, height: window_height }, "draw_image").expect("Failed to create draw Image");
 
-        let sizes = vec![PoolSizeRatio{ ty: vk::DescriptorType::STORAGE_IMAGE , ratio: 1.0 }];
+        let sizes = vec![PoolSizeRatio { ty: vk::DescriptorType::STORAGE_IMAGE, ratio: 1.0 }];
         let descr_alloc = descriptor::Allocator::new(context.clone(), 10, &sizes).expect("Failed to create descriptor allocator");
 
-        let mut renderer = Renderer { gradient_pipeline: Cell::new(Default::default()), gradient_pipeline_layout: Cell::new(Default::default()), draw_image_descriptor: Cell::default(), draw_image, context, swap_chain, frames, descriptor_allocator: Mutex::new(descr_alloc), draw_image_descr_layout: Cell::default(), immediate_submitter };
+        let egui_painter = EguiPainter::new(context.clone(), swap_chain.image_format).expect("Failed to create egui painter");
+
+        let mut renderer = Renderer { gradient_pipeline: Cell::new(Default::default()), gradient_pipeline_layout: Cell::new(Default::default()), draw_image_descriptor: Cell::default(), draw_image, context, swap_chain, frames, descriptor_allocator: Mutex::new(descr_alloc), draw_image_descr_layout: Cell::default(), immediate_submitter, egui_painter };
         renderer.init();
         renderer
     }
 
-    pub fn init(&mut self){
+    pub fn init(&mut self) {
         self.init_descriptors();
         self.init_pipelines()
     }
 
-    pub fn init_descriptors(&mut self){
+    pub fn init_descriptors(&mut self) {
         let mut builder = descriptor::LayoutBuilder::new();
         let device = &self.context.device;
         builder.add_binding(0, vk::DescriptorType::STORAGE_IMAGE);
-        self.draw_image_descr_layout =  Cell::from( unsafe{ builder.build(device, vk::ShaderStageFlags::COMPUTE, vk::DescriptorSetLayoutCreateFlags::empty()).expect("Failed to create descriptor layout") } );
+        self.draw_image_descr_layout = Cell::from(unsafe { builder.build(device, vk::ShaderStageFlags::COMPUTE, vk::DescriptorSetLayoutCreateFlags::empty()).expect("Failed to create descriptor layout") });
 
-        self.draw_image_descriptor = Cell::from ( self.descriptor_allocator.get_mut().unwrap().allocate(self.draw_image_descr_layout.get()).expect("Failed to allocate descriptor") );
+        self.draw_image_descriptor = Cell::from(self.descriptor_allocator.get_mut().unwrap().allocate(self.draw_image_descr_layout.get()).expect("Failed to allocate descriptor"));
 
         let image_info = vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::GENERAL)
@@ -93,19 +97,19 @@ impl Renderer{
         unsafe { device.update_descriptor_sets(&[draw_image_write], &[]) }
     }
 
-    pub fn init_pipelines(&mut self){
+    pub fn init_pipelines(&mut self) {
         self.init_background_pipelines();
     }
 
-    pub fn init_background_pipelines(&mut self){
+    pub fn init_background_pipelines(&mut self) {
         let descriptor_layouts = &[self.draw_image_descr_layout.get()];
         let compute_layout = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(descriptor_layouts);
         let device = &self.context.device;
 
-        self.gradient_pipeline_layout = Cell::from( unsafe{ device.create_pipeline_layout(&compute_layout, None).expect("Failed to create pipeline layout") } );
+        self.gradient_pipeline_layout = Cell::from(unsafe { device.create_pipeline_layout(&compute_layout, None).expect("Failed to create pipeline layout") });
 
-        let compute_draw_shader = unsafe{ load_shader_module(device, concat!(env!("OUT_DIR"), "/gradient.spv").as_ref()).expect("Failed to load shader") };
+        let compute_draw_shader = unsafe { load_shader_module(device, concat!(env!("OUT_DIR"), "/gradient.spv").as_ref()).expect("Failed to load shader") };
 
         let stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::COMPUTE)
@@ -116,58 +120,102 @@ impl Renderer{
             .stage(stage_info)
             .layout(self.gradient_pipeline_layout.get());
 
-        self.gradient_pipeline = Cell::from( unsafe{ device.create_compute_pipelines(vk::PipelineCache::null(), &[compute_draw_pipeline_info], None).expect("Failed to create compute pipeline")[0] } );
+        self.gradient_pipeline = Cell::from(unsafe { device.create_compute_pipelines(vk::PipelineCache::null(), &[compute_draw_pipeline_info], None).expect("Failed to create compute pipeline")[0] });
         unsafe { device.destroy_shader_module(compute_draw_shader, None) };
     }
 
-    pub fn draw(&self, frame_number: usize) -> Result<(), vk::Result>{
-        let current_frame = self.current_frame(frame_number);
+    pub fn draw(&mut self,
+                frame_number: usize,
+                primitives: &[egui::ClippedPrimitive],
+                textures_delta: &egui::TexturesDelta,
+                screen_size: [u32; 2],
+                pixels_per_point: f32, ) -> Result<(), Box<dyn Error>> {
+
+        self.egui_painter.update_textures(
+            self.context.clone(),
+            &self.immediate_submitter,
+            textures_delta,
+        )?;
+
+        let (render_fence, swap_chain_semaphore, cmb) = {
+            self.current_frame(frame_number);
+            (
+                self.current_frame(frame_number).render_fence,
+                self.current_frame(frame_number).swap_chain_semaphore,
+                self.current_frame(frame_number).command_buffer
+            )
+        };
+
         let device = &self.context.device;
         let present_queue = self.context.present_queue;
 
-        unsafe {device.wait_for_fences(&[current_frame.render_fence], true, ONE_SECOND.as_nanos() as u64)? }
-        unsafe {device.reset_fences(&[current_frame.render_fence])? };
+        unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
+        unsafe { device.reset_fences(&[render_fence])? };
 
         let (swap_chain_image_index, _) = unsafe {
             self.swap_chain.swapchain_loader.acquire_next_image(
                 self.swap_chain.swapchain,
                 ONE_SECOND.as_nanos() as u64,
-                current_frame.swap_chain_semaphore,
+                swap_chain_semaphore,
                 vk::Fence::null())?
         };
         let current_swap_chain_image = self.swap_chain.swapchain_images[swap_chain_image_index as usize];
 
-        let command_buffer = current_frame.command_buffer;
-        unsafe { device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())? };
+        unsafe { device.reset_command_buffer(cmb, vk::CommandBufferResetFlags::empty())? };
 
         let command_buffer_begin_info = standard_command_buffer_begin_info(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-        unsafe { device.begin_command_buffer(command_buffer, &command_buffer_begin_info)?; }
+        unsafe { device.begin_command_buffer(cmb, &command_buffer_begin_info)?; }
 
         // image::transition_image(&self.context, command_buffer, current_swap_chain_image.image, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
-        self.draw_image.transition_layout(command_buffer, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+        self.draw_image.transition_layout(cmb, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
 
-        unsafe { device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline.get()) };
+        unsafe { device.cmd_bind_pipeline(cmb, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline.get()) };
 
-        unsafe { device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline_layout.get(), 0, &[self.draw_image_descriptor.get()], &[]) };
+        unsafe { device.cmd_bind_descriptor_sets(cmb, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline_layout.get(), 0, &[self.draw_image_descriptor.get()], &[]) };
 
-        unsafe { device.cmd_dispatch(command_buffer, (WINDOW_WIDTH as f32 / 16.0).ceil() as u32, (WINDOW_HEIGHT as f32 / 16.0).ceil() as u32, 1) };
+        unsafe { device.cmd_dispatch(cmb, (WINDOW_WIDTH as f32 / 16.0).ceil() as u32, (WINDOW_HEIGHT as f32 / 16.0).ceil() as u32, 1) };
         // let flash = (frame_number as f32 / 120.0).sin().abs();
         // let color = vk::ClearColorValue { float32: [0.0, 0.0, flash, 0.0] };
         //
         // self.draw_image.clear_color(command_buffer, color);
 
-        self.draw_image.transition_layout(command_buffer, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
-        current_swap_chain_image.transition_image(&self.context, command_buffer, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        self.draw_image.transition_layout(cmb, vk::ImageLayout::GENERAL, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
-        self.draw_image.copy_to(command_buffer, current_swap_chain_image.image, self.swap_chain.image_extent);
+        current_swap_chain_image.transition_image(&self.context, cmb, vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        self.draw_image.copy_to(cmb, current_swap_chain_image.image, self.swap_chain.image_extent);
 
-        current_swap_chain_image.transition_image(&self.context, command_buffer, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+        current_swap_chain_image.transition_image(&self.context, cmb, vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        unsafe { device.end_command_buffer(command_buffer)? };
+        // 3. Rozpoczęcie Render Pass / Dynamic Rendering
+        // Ważne: load_op = LOAD gwarantuje, że interfejs zostanie nałożony NA skopiowany wcześniej gradient, a nie wyczyści go do czerni.
+        let color_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(current_swap_chain_image.image_view) // Tego brakowało - tutaj mówimy Vulkanowi po czym malować!
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::STORE);
 
-        let command_buffer_submit_info = standard_command_buffer_submit_info(command_buffer);
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: self.swap_chain.image_extent
+            })
+            .layer_count(1)
+            .color_attachments(std::slice::from_ref(&color_attachment));
+
+        unsafe { device.cmd_begin_rendering(cmb, &rendering_info); }
+
+        // 4. Wywołanie rysowania (komendy vkCmdDraw wewnątrz EguiPaintera wiedzą już, gdzie malować)
+        self.egui_painter.paint(cmb, primitives, screen_size, pixels_per_point)?;
+
+        // 5. Zakończenie Render Pass
+        unsafe { device.cmd_end_rendering(cmb); }
+
+        current_swap_chain_image.transition_image(&self.context, cmb, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR);
+        unsafe { device.end_command_buffer(cmb)? };
+
+        let command_buffer_submit_info = standard_command_buffer_submit_info(cmb);
         let wait_info = vk::SemaphoreSubmitInfo::default()
-            .semaphore(current_frame.swap_chain_semaphore)
+            .semaphore(swap_chain_semaphore)
             .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT_KHR)
             .value(1);
         let signal_info = vk::SemaphoreSubmitInfo::default()
@@ -180,7 +228,7 @@ impl Renderer{
         let cmb_infos = &[command_buffer_submit_info];
         let submit_info = standard_submit_info(w_infos, s_infos, cmb_infos);
 
-        unsafe { device.queue_submit2(present_queue, &[submit_info], current_frame.render_fence)? };
+        unsafe { device.queue_submit2(present_queue, &[submit_info], render_fence)? };
 
         let swap_chains = &[self.swap_chain.swapchain];
         let wait_semaphores = &[current_swap_chain_image.render_finished];
@@ -193,11 +241,9 @@ impl Renderer{
         unsafe { self.swap_chain.swapchain_loader.queue_present(present_queue, &present_info)? };
         Ok(())
     }
-
-
 }
 
-impl Drop for Renderer{
+impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
             let device = &self.context.device;
