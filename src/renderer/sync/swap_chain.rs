@@ -1,6 +1,6 @@
-use crate::renderer::context::SharedContext;
-use crate::renderer::image::transition_image;
-use crate::renderer::util;
+use crate::renderer::core::context::SharedContext;
+use crate::renderer::core::util;
+use crate::renderer::resource::image::transition_image;
 use ash::khr::swapchain;
 use ash::vk;
 use itertools::izip;

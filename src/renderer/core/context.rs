@@ -1,4 +1,4 @@
-use crate::renderer::debug_messenger::DebugMessenger;
+use crate::renderer::core::debug_messenger::DebugMessenger;
 use ash::ext::debug_utils;
 use ash::khr::surface;
 use ash::{vk, Device, Entry, Instance};

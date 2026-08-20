@@ -1,5 +1,5 @@
-use crate::renderer::context::SharedContext;
-use crate::renderer::util::standard_buffer_create_info;
+use crate::renderer::core::context::SharedContext;
+use crate::renderer::core::util::standard_buffer_create_info;
 use ash::{vk, Device};
 use gpu_allocator::vulkan::Allocation;
 use gpu_allocator::MemoryLocation;

@@ -1,5 +1,5 @@
-use crate::renderer::context::SharedContext;
-use crate::renderer::util;
+use crate::renderer::core::context::SharedContext;
+use crate::renderer::core::util;
 use ash::vk;
 use std::sync::Arc;
 

@@ -1,33 +1,28 @@
 use crate::app::{WINDOW_HEIGHT, WINDOW_WIDTH};
-use crate::renderer::context::SharedContext;
-use crate::renderer::descriptor::PoolSizeRatio;
-use crate::renderer::egui_painter::EguiPainter;
-use crate::renderer::frame::Frame;
-use crate::renderer::image::Image;
-use crate::renderer::immediate_submitter::ImmediateSubmitter;
 use crate::renderer::pipeline::load_shader_module;
-use crate::renderer::swap_chain::SwapChain;
-use crate::renderer::util::{standard_command_buffer_begin_info, standard_command_buffer_submit_info, standard_submit_info};
 use ash::vk;
+use core::context::SharedContext;
+use core::immediate_submitter::ImmediateSubmitter;
+use core::util::{standard_command_buffer_begin_info, standard_command_buffer_submit_info, standard_submit_info};
+use pass::egui_painter::EguiPainter;
+use resource::descriptor;
+use resource::descriptor::PoolSizeRatio;
+use resource::image::Image;
 use std::cell::Cell;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use sync::frame::Frame;
+use sync::swap_chain::SwapChain;
 use winit::window::Window;
 
 const FRAME_COUNT: usize = 2;
 
-mod context;
-mod debug_messenger;
-mod swap_chain;
-mod frame;
-mod image;
-pub mod util;
 mod pipeline;
-mod descriptor;
-mod immediate_submitter;
-mod egui_painter;
-mod buffer;
+pub mod core;
+pub mod resource;
+pub mod sync;
+pub mod pass;
 
 const ONE_SECOND: Duration = Duration::from_secs(1);
 

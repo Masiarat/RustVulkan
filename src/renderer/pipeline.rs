@@ -158,9 +158,6 @@ impl PipelineBuilder {
             .vertex_binding_descriptions(&self.vertex_bindings)
             .vertex_attribute_descriptions(&self.vertex_attributes);
 
-        // ====================================================
-        // MAGIA VULKAN 1.3 - DYNAMIC RENDERING (Brak RenderPass!)
-        // ====================================================
         let color_attachment_formats = [self.color_attachment_format];
         let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
             .color_attachment_formats(&color_attachment_formats);
@@ -188,7 +185,7 @@ impl PipelineBuilder {
                 std::slice::from_ref(&pipeline_info),
                 None,
             )
-        }.map_err(|e| e.1)?[0]; // e.1 zawiera kod błędu Vulkana w razie porażki
+        }.map_err(|e| e.1)?[0];
 
         Ok(pipeline)
     }
