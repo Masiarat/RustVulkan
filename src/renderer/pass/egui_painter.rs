@@ -5,24 +5,27 @@ use crate::renderer::pipeline::{load_shader_module, PipelineBuilder};
 use crate::renderer::resource::buffer::Buffer;
 use crate::renderer::resource::descriptor::{Allocator, PoolSizeRatio};
 use crate::renderer::resource::image::Image;
+use crate::renderer::resource::resizable_buffer::ResizableBuffer;
 use ash::vk;
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::CStr;
 use std::sync::Arc;
 
+const DESCRIPTOR_MAX_SETS: u32 = 10;
+
 pub struct EguiPainter {
-    pub vertex_buffer: Buffer,
-    pub index_buffer: Buffer,
+    pub vertex_buffer: ResizableBuffer,
+    pub index_buffer: ResizableBuffer,
 
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
 
-    pub textures: HashMap<egui::TextureId, (crate::renderer::resource::image::Image, vk::DescriptorSet)>,
+    pub textures:
+        HashMap<egui::TextureId, (crate::renderer::resource::image::Image, vk::DescriptorSet)>,
 
     pub sampler: vk::Sampler,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
-    pub font_descriptor_set: vk::DescriptorSet,
 
     pub descriptor_allocator: Allocator,
     context: Arc<SharedContext>,
@@ -48,16 +51,15 @@ impl EguiPainter {
         let sampler_info = standard_sampler_create_info();
         let sampler = unsafe { device.create_sampler(&sampler_info, None)? };
 
-        let mut descriptor_allocator = Allocator::new(
+        let descriptor_allocator = Allocator::new(
             context.clone(),
-            1,
+            DESCRIPTOR_MAX_SETS,
             &[PoolSizeRatio {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 ratio: 1.0,
             }],
+            vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
         )?;
-
-        let font_descriptor_set = descriptor_allocator.allocate(descriptor_set_layout)?;
 
         // 8 bajtów na Push Constant (2x float32 dla szerokości i wysokości ekranu)
         let push_constant_range = vk::PushConstantRange::default()
@@ -126,17 +128,16 @@ impl EguiPainter {
             device.destroy_shader_module(egui_shader_module, None);
         }
 
-        let vertex_buffer = Buffer::new(
+        let vertex_buffer = ResizableBuffer::new(
             context.clone(),
-            32768,
+            2,
             vk::BufferUsageFlags::VERTEX_BUFFER,
             "egui_vertex_buffer",
             gpu_allocator::MemoryLocation::CpuToGpu,
         )?;
-
-        let index_buffer = Buffer::new(
+        let index_buffer = ResizableBuffer::new(
             context.clone(),
-            32768,
+            2,
             vk::BufferUsageFlags::INDEX_BUFFER,
             "egui_index_buffer",
             gpu_allocator::MemoryLocation::CpuToGpu,
@@ -150,7 +151,6 @@ impl EguiPainter {
             textures: HashMap::new(),
             sampler,
             descriptor_set_layout,
-            font_descriptor_set,
             descriptor_allocator,
             context,
         })
@@ -165,6 +165,8 @@ impl EguiPainter {
         let device = &context.device;
 
         for texture_id in &textures_delta.free {
+            self.descriptor_allocator
+                .remove(self.textures[texture_id].1)?;
             self.textures.remove(texture_id);
         }
 
@@ -193,13 +195,20 @@ impl EguiPainter {
 
             staging_buffer.copy_from_slice(&pixels)?;
 
-            // Tworzymy docelową teksturę Image
             let extent = vk::Extent2D { width, height };
-            let texture = Image::new_texture(
-                context.clone(),
-                extent,
-                &format!("egui_texture_{:?}", texture_id), // Dynamiczna nazwa dla alokatora
-            )?;
+            let mut texture_to_insert: Option<Image> = None;
+            let texture = match self.textures.get(texture_id) {
+                Some(existing_texture) => &existing_texture.0,
+                None => &{
+                    let texture = Image::new_texture(
+                        context.clone(),
+                        extent,
+                        &format!("egui_texture_{:?}", texture_id),
+                    )?;
+                    texture_to_insert = Some(texture);
+                    texture_to_insert.as_ref().unwrap()
+                },
+            };
 
             // Kopiujemy dane przez Immediate Submitter
             immediate_submitter.submit(|cmd| {
@@ -244,8 +253,12 @@ impl EguiPainter {
                 .image_view(texture.image_view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
+            let descriptor_set = self
+                .descriptor_allocator
+                .allocate(self.descriptor_set_layout)?;
+
             let write_info = vk::WriteDescriptorSet::default()
-                .dst_set(self.font_descriptor_set)
+                .dst_set(descriptor_set)
                 .dst_binding(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(std::slice::from_ref(&image_info));
@@ -254,8 +267,9 @@ impl EguiPainter {
                 device.update_descriptor_sets(&[write_info], &[]);
             }
 
-            self.textures
-                .insert(*texture_id, (texture, self.font_descriptor_set));
+            if let Some(texture) = texture_to_insert {
+                self.textures.insert(*texture_id, (texture, descriptor_set));
+            }
         }
 
         Ok(())
@@ -309,6 +323,8 @@ impl EguiPainter {
             )
         };
 
+        self.vertex_buffer.resize(vertex_size)?;
+        self.index_buffer.resize(index_size)?;
         self.vertex_buffer.copy_from_slice(vertices_bytes)?;
         self.index_buffer.copy_from_slice(indices_bytes)?;
 
@@ -348,8 +364,8 @@ impl EguiPainter {
             device.cmd_set_viewport(cmd, 0, &[viewport]);
 
             // Podpinamy bufory (korzystamy z jednego zbiorczego bufora dla wszystkich elementów)
-            device.cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer.buffer], &[0]);
-            device.cmd_bind_index_buffer(cmd, self.index_buffer.buffer, 0, vk::IndexType::UINT32);
+            device.cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer.buffer()], &[0]);
+            device.cmd_bind_index_buffer(cmd, self.index_buffer.buffer(), 0, vk::IndexType::UINT32);
 
             let mut vertex_offset = 0;
             let mut index_offset = 0;
@@ -425,12 +441,13 @@ impl EguiPainter {
 
 impl Drop for EguiPainter {
     fn drop(&mut self) {
-        unsafe { self.context.device.destroy_pipeline(self.pipeline, None) }
         unsafe {
+            self.context.device.destroy_pipeline(self.pipeline, None);
             self.context
                 .device
-                .destroy_pipeline_layout(self.pipeline_layout, None)
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.context.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.context.device.destroy_sampler(self.sampler, None);
         }
-        unsafe { self.context.device.destroy_sampler(self.sampler, None) }
     }
 }

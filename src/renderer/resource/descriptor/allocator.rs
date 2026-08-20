@@ -10,7 +10,7 @@ pub struct Allocator {
 }
 
 impl Allocator {
-    pub fn new(context: Arc<SharedContext>, max_sets: u32, pool_ratios: &[PoolSizeRatio]) -> Result<Allocator, vk::Result> {
+    pub fn new(context: Arc<SharedContext>, max_sets: u32, pool_ratios: &[PoolSizeRatio], flags: vk::DescriptorPoolCreateFlags) -> Result<Allocator, vk::Result> {
         let pool_sizes = pool_ratios.iter().map(|x| {
             vk::DescriptorPoolSize::default().ty(x.ty).descriptor_count((max_sets as f32 * x.ratio) as u32)
         }).collect::<Vec<_>>();
@@ -18,12 +18,16 @@ impl Allocator {
         let allocated_layouts = Vec::new();
 
         let pool_info = vk::DescriptorPoolCreateInfo::default()
-            .flags(vk::DescriptorPoolCreateFlags::empty())
+            .flags(flags)
             .max_sets(max_sets)
             .pool_sizes(&pool_sizes);
 
         let pool = unsafe{ context.device.create_descriptor_pool(&pool_info, None)? };
         Ok(Allocator{ context, allocated_layouts, pool })
+    }
+
+    pub fn remove(&mut self, desc_set: vk::DescriptorSet) -> Result<(), vk::Result>{
+        unsafe{ self.context.device.free_descriptor_sets(self.pool, &[desc_set]) }
     }
 
     pub fn clear(&mut self) -> Result<(), vk::Result>{

@@ -86,7 +86,9 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
+
         unsafe {
+            self.context.device.device_wait_idle().expect("Failed to wait for device idle");
             self.context.device.destroy_buffer(self.buffer, None);
         }
         if let Some(allocation) = self.allocation.take() {

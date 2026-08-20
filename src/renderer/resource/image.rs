@@ -149,12 +149,15 @@ impl Image {
 
 impl Drop for Image {
     fn drop(&mut self) {
-        println!("Destroying image view");
-        let device = &self.context.device;
-        unsafe { device.destroy_image_view(self.image_view, None) };
 
-        println!("Destroying image");
-        unsafe { device.destroy_image(self.image, None) };
+        let device = &self.context.device;
+        unsafe {
+            device.device_wait_idle().expect("Failed to wait for device idle");
+            println!("Destroying image view");
+            device.destroy_image_view(self.image_view, None) ;
+            println!("Destroying image");
+            device.destroy_image(self.image, None);
+        };
 
         if let Some(allocation) = self.allocation.take() {
             if let Err(e) = self.context.free_allocation(allocation) {

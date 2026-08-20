@@ -55,7 +55,7 @@ impl Renderer {
         let draw_image = Image::new_display(context.clone(), vk::Extent2D { width: window_width, height: window_height }, "draw_image").expect("Failed to create draw Image");
 
         let sizes = vec![PoolSizeRatio { ty: vk::DescriptorType::STORAGE_IMAGE, ratio: 1.0 }];
-        let descr_alloc = descriptor::Allocator::new(context.clone(), 10, &sizes).expect("Failed to create descriptor allocator");
+        let descr_alloc = descriptor::Allocator::new(context.clone(), 10, &sizes, vk::DescriptorPoolCreateFlags::empty()).expect("Failed to create descriptor allocator");
 
         let egui_painter = EguiPainter::new(context.clone(), swap_chain.image_format).expect("Failed to create egui painter");
 
