@@ -1,11 +1,11 @@
 use crate::renderer::core::context::SharedContext;
 use ash::vk;
+use std::collections::HashSet;
 use std::sync::Arc;
 
-#[derive(Clone)]
 pub struct Allocator {
     pool: vk::DescriptorPool,
-    allocated_layouts: Vec<vk::DescriptorSetLayout>,
+    allocated_layouts: HashSet<vk::DescriptorSetLayout>,
 
     context: Arc<SharedContext>
 }
@@ -16,7 +16,7 @@ impl Allocator {
             vk::DescriptorPoolSize::default().ty(x.ty).descriptor_count((max_sets as f32 * x.ratio) as u32)
         }).collect::<Vec<_>>();
 
-        let allocated_layouts = Vec::new();
+        let allocated_layouts = HashSet::new();
 
         let pool_info = vk::DescriptorPoolCreateInfo::default()
             .flags(flags)
@@ -36,7 +36,7 @@ impl Allocator {
     }
 
     pub fn allocate(&mut self, descriptor_set_layout: vk::DescriptorSetLayout) -> Result<vk::DescriptorSet, vk::Result> {
-        self.allocated_layouts.push(descriptor_set_layout);
+        self.allocated_layouts.insert(descriptor_set_layout);
         let layouts = &[descriptor_set_layout];
         let alloc_info = vk::DescriptorSetAllocateInfo::default()
             .descriptor_pool(self.pool)

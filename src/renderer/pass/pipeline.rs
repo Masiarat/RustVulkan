@@ -2,19 +2,16 @@ use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::util::standard_sampler_create_info;
 use crate::renderer::pipeline::{load_shader_module, PipelineBuilder};
-use crate::renderer::resource::descriptor::{Allocator, PoolSizeRatio};
 use ash::vk;
 use std::ffi::CStr;
 use std::sync::Arc;
 
-const DESCRIPTOR_MAX_SETS: u32 = 10;
 
 pub struct EguiPipeline {
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
     pub sampler: vk::Sampler,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
-    pub descriptor_allocator: Allocator,
     context: Arc<SharedContext>,
 }
 
@@ -32,21 +29,12 @@ impl EguiPipeline {
             .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
 
         let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
+
         let descriptor_set_layout =
             unsafe { device.create_descriptor_set_layout(&layout_info, None)? };
 
         let sampler_info = standard_sampler_create_info();
         let sampler = unsafe { device.create_sampler(&sampler_info, None)? };
-
-        let descriptor_allocator = Allocator::new(
-            context.clone(),
-            DESCRIPTOR_MAX_SETS,
-            &[PoolSizeRatio {
-                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                ratio: 1.0,
-            }],
-            vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
-        )?;
 
         let push_constant_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX)
@@ -121,7 +109,6 @@ impl EguiPipeline {
             pipeline,
             sampler,
             descriptor_set_layout,
-            descriptor_allocator,
             context,
         })
     }

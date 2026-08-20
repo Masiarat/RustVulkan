@@ -1,9 +1,10 @@
-use crate::error::RendererResult;
-use crate::renderer::core::context::SharedContext;
-use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
 use super::drawing::DrawContext;
 use super::pipeline::EguiPipeline;
 use super::texture_manager::TextureManager;
+use crate::error::RendererResult;
+use crate::renderer::core::context::SharedContext;
+use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
+use crate::renderer::resource::descriptor::{Allocator, PoolSizeRatio};
 use ash::vk;
 use std::sync::Arc;
 
@@ -14,6 +15,8 @@ pub struct EguiPainter {
     context: Arc<SharedContext>,
 }
 
+const DESCRIPTOR_MAX_SETS: u32 = 10;
+
 impl EguiPainter {
     pub fn new(
         context: Arc<SharedContext>,
@@ -21,9 +24,18 @@ impl EguiPainter {
     ) -> RendererResult<Self> {
         let pipeline = EguiPipeline::new(context.clone(), swapchain_format)?;
         let draw_context = DrawContext::new(context.clone())?;
+        let descriptor_allocator = Allocator::new(
+            context.clone(),
+            DESCRIPTOR_MAX_SETS,
+            &[PoolSizeRatio {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                ratio: 1.0,
+            }],
+            vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
+        )?;
         let texture_manager = TextureManager::new(
             context.clone(),
-            pipeline.descriptor_allocator.clone(),
+            descriptor_allocator,
             pipeline.sampler,
             pipeline.descriptor_set_layout,
         );
