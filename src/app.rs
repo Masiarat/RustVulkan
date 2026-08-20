@@ -48,11 +48,14 @@ impl ApplicationHandler for App {
         self.window = Some(window);
         self.egui_state = Some(egui_state);
 
-        self.renderer = Some(Renderer::new(
+        match crate::renderer::Renderer::new(
             WINDOW_WIDTH,
             WINDOW_HEIGHT,
             self.window.as_ref().unwrap()
-        ));
+        ) {
+            Ok(renderer) => self.renderer = Some(renderer),
+            Err(e) => eprintln!("Failed to create renderer: {}", e),
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
@@ -105,14 +108,17 @@ impl ApplicationHandler for App {
 
                 // RENDEROWANIE!
                 // Przekazujemy paczkę wygenerowaną przez UI do naszego Renderera
-                let log_message = format!("Frame number: {}", *frame_number);
-                self.renderer.as_mut().unwrap().draw(
+                let _log_message = format!("Frame number: {}", *frame_number);
+                match self.renderer.as_mut().unwrap().draw(
                     *frame_number,
                     &primitives,
                     &full_output.textures_delta,
                     screen_size,
                     pixels_per_point
-                ).expect(&log_message);
+                ) {
+                    Ok(_) => {},
+                    Err(e) => eprintln!("Draw error: {}", e),
+                }
                 full_output.textures_delta.clear();
             }
             _ => {}

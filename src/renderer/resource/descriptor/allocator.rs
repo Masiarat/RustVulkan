@@ -2,6 +2,7 @@ use crate::renderer::core::context::SharedContext;
 use ash::vk;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct Allocator {
     pool: vk::DescriptorPool,
     allocated_layouts: Vec<vk::DescriptorSetLayout>,

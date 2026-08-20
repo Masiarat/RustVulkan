@@ -1,7 +1,7 @@
 use ash::vk::ShaderModule;
 use ash::{vk, Device};
+use crate::error::RendererResult;
 use std::fs;
-use std::io;
 use std::path::Path;
 
 pub struct PipelineBuilder {
@@ -138,12 +138,11 @@ impl PipelineBuilder {
     }
 
     // GŁÓWNA FUNKCJA BUDUJĄCA
-    pub fn build(self, device: &Device) -> Result<vk::Pipeline, vk::Result> {
+    pub fn build(self, device: &Device) -> RendererResult<vk::Pipeline> {
         let viewport_state = vk::PipelineViewportStateCreateInfo::default()
             .viewport_count(1)
             .scissor_count(1);
 
-        // Zawsze używamy dynamicznych rozmiarów ekranu i nożyczek (Viewport & Scissor)
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic_state_info = vk::PipelineDynamicStateCreateInfo::default()
             .dynamic_states(&dynamic_states);
@@ -185,15 +184,16 @@ impl PipelineBuilder {
                 std::slice::from_ref(&pipeline_info),
                 None,
             )
-        }.map_err(|e| e.1)?[0];
+        }.map_err(|e| crate::error::RendererError::PipelineError(format!("Failed to create graphics pipeline: {:?}", e.1)))?[0];
 
         Ok(pipeline)
     }
 }
 
 /// Load a SPIR-V file from the disk and create a `vk::ShaderModule`.
-pub unsafe fn load_shader_module(device: &Device, path: &Path) -> Result<ShaderModule, ShaderLoadError> {
-    let bytes = fs::read(path).map_err(|e| ShaderLoadError::Io(path.to_path_buf(), e))?;
+pub unsafe fn load_shader_module(device: &Device, path: &Path) -> RendererResult<ShaderModule> {
+    let bytes = fs::read(path)
+        .map_err(|e| crate::error::RendererError::ShaderError(format!("Failed to read shader file: {}", e)))?;
     unsafe { load_shader_module_from_bytes(device, &bytes) }
 }
 
@@ -201,11 +201,12 @@ pub unsafe fn load_shader_module(device: &Device, path: &Path) -> Result<ShaderM
 pub unsafe fn load_shader_module_from_bytes(
     device: &Device,
     spirv: &[u8],
-) -> Result<vk::ShaderModule, ShaderLoadError> {
+) -> RendererResult<vk::ShaderModule> {
     if spirv.len() % std::mem::size_of::<u32>() != 0 {
-        return Err( ShaderLoadError::ByteLength(spirv.len()) );
+        return Err(crate::error::RendererError::ShaderError(
+            format!("SPIR-V byte length {} is not a multiple of 4", spirv.len()),
+        ));
     }
-    // SPIR-V is a stream of 32-bit words; Vulkan wants a `&[u32]`.
     let code: &[u32] = unsafe {
         std::slice::from_raw_parts(
             spirv.as_ptr().cast::<u32>(),
@@ -214,15 +215,5 @@ pub unsafe fn load_shader_module_from_bytes(
     };
 
     let create_info = vk::ShaderModuleCreateInfo::default().code(code);
-    unsafe { device.create_shader_module(&create_info, None).map_err(ShaderLoadError::Create) }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ShaderLoadError {
-    #[error("failed to read shader file `{0}`: {1}")]
-    Io(std::path::PathBuf, io::Error),
-    #[error("SPIR-V byte length {0} is not a multiple of 4")]
-    ByteLength(usize),
-    #[error("vkCreateShaderModule failed: {0}")]
-    Create(vk::Result),
+    Ok(unsafe { device.create_shader_module(&create_info, None)? })
 }

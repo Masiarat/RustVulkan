@@ -1,0 +1,161 @@
+use crate::error::RendererResult;
+use crate::renderer::core::context::SharedContext;
+use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
+use crate::renderer::resource::buffer::Buffer;
+use crate::renderer::resource::descriptor::Allocator;
+use crate::renderer::resource::image::Image;
+use ash::vk;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+pub struct TextureManager {
+    pub textures: HashMap<egui::TextureId, (Image, vk::DescriptorSet)>,
+    sampler: vk::Sampler,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    pub descriptor_allocator: Allocator,
+    context: Arc<SharedContext>,
+}
+
+impl TextureManager {
+    pub fn new(
+        context: Arc<SharedContext>,
+        descriptor_allocator: Allocator,
+        sampler: vk::Sampler,
+        descriptor_set_layout: vk::DescriptorSetLayout,
+    ) -> Self {
+        Self {
+            textures: HashMap::new(),
+            sampler,
+            descriptor_set_layout,
+            descriptor_allocator,
+            context,
+        }
+    }
+
+    pub fn update(
+        &mut self,
+        immediate_submitter: &ImmediateSubmitter,
+        textures_delta: &egui::TexturesDelta,
+    ) -> RendererResult<()> {
+        let device = &self.context.device;
+
+        for texture_id in &textures_delta.free {
+            self.descriptor_allocator.remove(self.textures[texture_id].1)?;
+            self.textures.remove(texture_id);
+        }
+
+        for (texture_id, image_delta) in &textures_delta.set {
+            let (width, height, pixels) = {
+                let egui::ImageData::Color(color_image) = &image_delta[0].image;
+                let w = color_image.width() as u32;
+                let h = color_image.height() as u32;
+                let pixels: Vec<u8> = color_image
+                    .pixels
+                    .iter()
+                    .flat_map(|p| p.to_array())
+                    .collect();
+                (w, h, pixels)
+            };
+
+            let mut staging_buffer = Buffer::new(
+                self.context.clone(),
+                pixels.len() as u64,
+                vk::BufferUsageFlags::TRANSFER_SRC,
+                &format!("egui_staging_buffer_{:?}", texture_id),
+                gpu_allocator::MemoryLocation::CpuToGpu,
+            ).map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
+
+            staging_buffer.copy_from_slice(&pixels)
+                .map_err(|e| crate::error::RendererError::BufferAllocationError(e))?;
+
+            let extent = vk::Extent2D { width, height };
+            let mut texture_to_insert: Option<Image> = None;
+            let texture = match self.textures.get(texture_id) {
+                Some(existing_texture) => &existing_texture.0,
+                None => &{
+                    let texture = Image::new_texture(
+                        self.context.clone(),
+                        extent,
+                        &format!("egui_texture_{:?}", texture_id),
+                    ).map_err(|e| crate::error::RendererError::ImageAllocationError(e.to_string()))?;
+                    texture_to_insert = Some(texture);
+                    texture_to_insert.as_ref().unwrap()
+                },
+            };
+
+            immediate_submitter.submit(|cmd| {
+                texture.transition_layout(
+                    cmd,
+                    vk::ImageLayout::UNDEFINED,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                );
+
+                let copy_region = vk::BufferImageCopy::default()
+                    .image_subresource(vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .image_extent(vk::Extent3D {
+                        width,
+                        height,
+                        depth: 1,
+                    });
+
+                unsafe {
+                    device.cmd_copy_buffer_to_image(
+                        cmd,
+                        staging_buffer.buffer,
+                        texture.image,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &[copy_region],
+                    );
+                }
+
+                texture.transition_layout(
+                    cmd,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                );
+            })?;
+
+            let image_info = vk::DescriptorImageInfo::default()
+                .sampler(self.sampler)
+                .image_view(texture.image_view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+            let descriptor_set = self
+                .descriptor_allocator
+                .allocate(self.descriptor_set_layout)?;
+
+            let write_info = vk::WriteDescriptorSet::default()
+                .dst_set(descriptor_set)
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(std::slice::from_ref(&image_info));
+
+            unsafe {
+                device.update_descriptor_sets(&[write_info], &[]);
+            }
+
+            if let Some(texture) = texture_to_insert {
+                self.textures.insert(*texture_id, (texture, descriptor_set));
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn get(&self, texture_id: &egui::TextureId) -> Option<vk::DescriptorSet> {
+        self.textures.get(texture_id).map(|(_, desc_set)| *desc_set)
+    }
+}
+
+impl Drop for TextureManager {
+    fn drop(&mut self) {
+        unsafe {
+            self.context.device.destroy_sampler(self.sampler, None);
+        }
+    }
+}

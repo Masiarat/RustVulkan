@@ -2,6 +2,7 @@ use crate::app::App;
 use winit::event_loop;
 use winit::event_loop::ControlFlow;
 
+mod error;
 mod renderer;
 mod app;
 
