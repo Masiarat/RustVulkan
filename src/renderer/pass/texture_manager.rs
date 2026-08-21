@@ -69,26 +69,55 @@ impl TextureManager {
                 .map_err(|e| crate::error::RendererError::BufferAllocationError(e))?;
 
             let extent = vk::Extent2D { width, height };
-            let mut texture_to_insert: Option<Image> = None;
-            let texture = match self.textures.get(texture_id) {
-                Some(existing_texture) => &existing_texture.0,
-                None => &{
-                    let texture = Image::new_texture(
-                        self.context.clone(),
-                        extent,
-                        &format!("egui_texture_{:?}", texture_id),
-                    ).map_err(|e| crate::error::RendererError::ImageAllocationError(e.to_string()))?;
-                    texture_to_insert = Some(texture);
-                    texture_to_insert.as_ref().unwrap()
-                },
-            };
+            let is_new_texture = !self.textures.contains_key(texture_id);
+
+            if is_new_texture {
+                let texture = Image::new_texture(
+                    self.context.clone(),
+                    extent,
+                    &format!("egui_texture_{:?}", texture_id),
+                ).map_err(|e| crate::error::RendererError::ImageAllocationError(e.to_string()))?;
+
+                let image_info = vk::DescriptorImageInfo::default()
+                    .sampler(self.sampler)
+                    .image_view(texture.image_view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+                let descriptor_set = self
+                    .descriptor_allocator
+                    .allocate(self.descriptor_set_layout)?;
+
+                let write_info = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor_set)
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(std::slice::from_ref(&image_info));
+
+                unsafe {
+                    device.update_descriptor_sets(&[write_info], &[]);
+                }
+
+                self.textures.insert(*texture_id, (texture, descriptor_set));
+            }
+
+            let texture = &self
+                .textures
+                .get(texture_id)
+                .expect("Texture must exist after insertion")
+                .0;
 
             immediate_submitter.submit(|cmd| {
-                texture.transition_layout(
-                    cmd,
-                    vk::ImageLayout::UNDEFINED,
-                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                );
+                let old_layout = if is_new_texture {
+                    vk::ImageLayout::UNDEFINED
+                } else {
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                };
+                texture.transition_layout(cmd, old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+
+                let (offset_x, offset_y) = match image_delta[0].pos {
+                    Some([x, y]) => (x as i32, y as i32),
+                    None => (0, 0),
+                };
 
                 let copy_region = vk::BufferImageCopy::default()
                     .image_subresource(vk::ImageSubresourceLayers {
@@ -96,6 +125,11 @@ impl TextureManager {
                         mip_level: 0,
                         base_array_layer: 0,
                         layer_count: 1,
+                    })
+                    .image_offset(vk::Offset3D {
+                        x: offset_x,
+                        y: offset_y,
+                        z: 0,
                     })
                     .image_extent(vk::Extent3D {
                         width,
@@ -119,29 +153,6 @@ impl TextureManager {
                     vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 );
             })?;
-
-            let image_info = vk::DescriptorImageInfo::default()
-                .sampler(self.sampler)
-                .image_view(texture.image_view)
-                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
-            let descriptor_set = self
-                .descriptor_allocator
-                .allocate(self.descriptor_set_layout)?;
-
-            let write_info = vk::WriteDescriptorSet::default()
-                .dst_set(descriptor_set)
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(std::slice::from_ref(&image_info));
-
-            unsafe {
-                device.update_descriptor_sets(&[write_info], &[]);
-            }
-
-            if let Some(texture) = texture_to_insert {
-                self.textures.insert(*texture_id, (texture, descriptor_set));
-            }
         }
 
         Ok(())

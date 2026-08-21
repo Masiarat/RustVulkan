@@ -15,7 +15,7 @@ pub struct EguiPainter {
     context: Arc<SharedContext>,
 }
 
-const DESCRIPTOR_MAX_SETS: u32 = 10;
+const DESCRIPTOR_MAX_SETS: u32 = 100;
 
 impl EguiPainter {
     pub fn new(

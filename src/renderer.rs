@@ -179,7 +179,6 @@ impl Renderer {
         screen_size: [u32; 2],
         pixels_per_point: f32,
     ) -> RendererResult<()> {
-        self.egui_painter.update_textures(&self.immediate_submitter, textures_delta)?;
 
         let (render_fence, swap_chain_semaphore, cmb) = {
             self.current_frame(frame_number);
@@ -194,6 +193,7 @@ impl Renderer {
         let present_queue = self.context.present_queue;
 
         unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
+        self.egui_painter.update_textures(&self.immediate_submitter, textures_delta)?;
         unsafe { device.reset_fences(&[render_fence])? };
 
         let (swap_chain_image_index, _) = unsafe {
