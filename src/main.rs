@@ -5,6 +5,7 @@ use winit::event_loop::ControlFlow;
 mod error;
 mod renderer;
 mod app;
+mod debug_ui;
 
 fn main() {
     let event_loop = event_loop::EventLoop::new().expect("Could not create event loop");

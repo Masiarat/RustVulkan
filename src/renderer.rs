@@ -188,13 +188,16 @@ impl Renderer {
                 self.current_frame(frame_number).command_buffer,
             )
         };
-        self.egui_painter.update_textures(&self.immediate_submitter, textures_delta)?;
+        let frame_index = frame_number % FRAME_COUNT;
+
 
         let device = &self.context.device;
         let present_queue = self.context.present_queue;
 
         unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
         self.context.with_destroy_queue(|q| q.flush(&self.context))??;
+        self.egui_painter.cleanup(frame_index)?;
+        self.egui_painter.update_textures(&self.immediate_submitter, textures_delta, frame_index)?;
         unsafe { device.reset_fences(&[render_fence])? };
 
         let (swap_chain_image_index, _) = unsafe {

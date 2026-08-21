@@ -1,3 +1,4 @@
+use crate::debug_ui::ResourceTestPanel;
 use crate::renderer::Renderer;
 use std::cell::RefCell;
 use winit::application::ApplicationHandler;
@@ -12,6 +13,8 @@ pub struct App {
     // Nowe pola dla egui
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
+    // Panel do testowania tworzenia/zwalniania tekstur i obrazów z egui
+    resource_test_panel: ResourceTestPanel,
 
     renderer: Option<Renderer>,
     window: Option<Window>,
@@ -26,6 +29,7 @@ impl App {
             frame_number: RefCell::new(0),
             egui_ctx: egui::Context::default(),
             egui_state: None,
+            resource_test_panel: ResourceTestPanel::new(),
         }
     }
 }
@@ -84,6 +88,12 @@ impl ApplicationHandler for App {
                 // Pobieramy to, co użytkownik "naklikał"
                 let raw_input = state.take_egui_input(window);
 
+                // Liczba tekstur aktualnie żyjących po stronie GPU (do weryfikacji cleanupu)
+                let gpu_texture_count = self
+                    .renderer
+                    .as_ref()
+                    .map(|renderer| renderer.egui_painter.texture_count());
+
                 // Startujemy UI i nagrywamy klatkę!
                 let mut full_output = self.egui_ctx.run_ui(raw_input, |ctx| {
                     egui::Window::new("⚙ Moje Pierwsze UI w Vulkanie!").show(ctx, |ui| {
@@ -93,6 +103,9 @@ impl ApplicationHandler for App {
                             println!("Przycisk został kliknięty!");
                         }
                     });
+
+                    // Panel testujący tworzenie/zwalnianie zasobów (tekstury/obrazy)
+                    self.resource_test_panel.show(ctx, gpu_texture_count);
                 });
 
                 // Obsługa rzeczy systemowych (np. zmiana kursora myszy na "łapkę" nad linkiem)

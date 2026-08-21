@@ -1,6 +1,6 @@
 use super::drawing::DrawContext;
 use super::pipeline::EguiPipeline;
-use super::texture_manager::TextureManager;
+use super::texture_manager::{EguiTexture, TextureManager};
 use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
@@ -52,8 +52,18 @@ impl EguiPainter {
         &mut self,
         immediate_submitter: &ImmediateSubmitter,
         textures_delta: &egui::TexturesDelta,
+        frame_index: usize,
     ) -> RendererResult<()> {
-        self.texture_manager.update(immediate_submitter, textures_delta)
+        self.texture_manager.update(immediate_submitter, textures_delta, frame_index)  
+    }
+
+    pub fn cleanup(&mut self, frame_index: usize) -> RendererResult<()> {
+        self.texture_manager.flush_descriptor_sets(frame_index)
+    }
+    
+    /// Number of GPU-side textures currently tracked by the `TextureManager`.
+    pub fn texture_count(&self) -> usize {
+        self.texture_manager.count()
     }
 
     pub fn paint(
@@ -69,7 +79,7 @@ impl EguiPainter {
             .texture_manager
             .textures
             .iter()
-            .filter_map(|(id, (_, desc_set))| Some((*id, *desc_set)))
+            .filter_map(|(id, EguiTexture { texture: _, descriptor_set })| Some((*id, *descriptor_set)))
             .collect();
 
         self.draw_context.paint(

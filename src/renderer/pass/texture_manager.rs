@@ -1,4 +1,4 @@
-use crate::error::RendererResult;
+use crate::error::{RendererError, RendererResult};
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
 use crate::renderer::resource::buffer::Buffer;
@@ -9,10 +9,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct TextureManager {
-    pub textures: HashMap<egui::TextureId, (Image, vk::DescriptorSet)>,
+    pub textures: HashMap<egui::TextureId, EguiTexture>,
     sampler: vk::Sampler,
     descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_allocator: DescAllocator,
+    texture_free_queue: [Vec<EguiTexture>; crate::renderer::FRAME_COUNT],
     context: Arc<SharedContext>,
 }
 
@@ -28,6 +29,7 @@ impl TextureManager {
             sampler,
             descriptor_set_layout,
             descriptor_allocator,
+            texture_free_queue: Default::default(),
             context,
         }
     }
@@ -36,12 +38,15 @@ impl TextureManager {
         &mut self,
         immediate_submitter: &ImmediateSubmitter,
         textures_delta: &egui::TexturesDelta,
+        frame_index: usize
     ) -> RendererResult<()> {
+
         let device = &self.context.device;
 
         for texture_id in &textures_delta.free {
-            self.descriptor_allocator.remove(self.textures[texture_id].1)?;
-            self.textures.remove(texture_id);
+            if let Some(egui_texture) = self.textures.remove(texture_id) {
+                self.texture_free_queue[frame_index].push(egui_texture);
+            }
         }
 
         for (texture_id, image_delta) in &textures_delta.set {
@@ -63,9 +68,11 @@ impl TextureManager {
                 vk::BufferUsageFlags::TRANSFER_SRC,
                 &format!("egui_staging_buffer_{:?}", texture_id),
                 gpu_allocator::MemoryLocation::CpuToGpu,
-            ).map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
+            )
+            .map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
 
-            staging_buffer.copy_from_slice(&pixels)
+            staging_buffer
+                .copy_from_slice(&pixels)
                 .map_err(|e| crate::error::RendererError::BufferAllocationError(e))?;
 
             let extent = vk::Extent2D { width, height };
@@ -76,7 +83,8 @@ impl TextureManager {
                     self.context.clone(),
                     extent,
                     &format!("egui_texture_{:?}", texture_id),
-                ).map_err(|e| crate::error::RendererError::ImageAllocationError(e.to_string()))?;
+                )
+                .map_err(|e| crate::error::RendererError::ImageAllocationError(e.to_string()))?;
 
                 let image_info = vk::DescriptorImageInfo::default()
                     .sampler(self.sampler)
@@ -97,14 +105,11 @@ impl TextureManager {
                     device.update_descriptor_sets(&[write_info], &[]);
                 }
 
-                self.textures.insert(*texture_id, (texture, descriptor_set));
+                self.textures.insert(*texture_id, EguiTexture{texture, descriptor_set});
             }
 
-            let texture = &self
-                .textures
-                .get(texture_id)
-                .expect("Texture must exist after insertion")
-                .0;
+            let texture = self.textures.get(texture_id).map(|x| &x.texture).ok_or(RendererError::TextureError(format!("Texture not found: {:?}", texture_id)))?;
+
 
             immediate_submitter.submit(|cmd| {
                 let old_layout = if is_new_texture {
@@ -154,12 +159,19 @@ impl TextureManager {
                 );
             })?;
         }
-
         Ok(())
     }
 
-    pub fn get(&self, texture_id: &egui::TextureId) -> Option<vk::DescriptorSet> {
-        self.textures.get(texture_id).map(|(_, desc_set)| *desc_set)
+    pub fn flush_descriptor_sets(&mut self, frame_index: usize) -> RendererResult<()>{
+        self.texture_free_queue[frame_index].drain(..).try_for_each(|EguiTexture{descriptor_set, ..}| {
+            self.descriptor_allocator
+                .remove(descriptor_set)
+                .map_err(|e| RendererError::from(e))
+        })
+    }
+
+    pub fn count(&self) -> usize {
+        self.textures.len()
     }
 }
 
@@ -169,4 +181,9 @@ impl Drop for TextureManager {
             self.context.device.destroy_sampler(self.sampler, None);
         }
     }
+}
+
+pub struct EguiTexture {
+    pub descriptor_set: vk::DescriptorSet,
+    pub texture: Image,
 }

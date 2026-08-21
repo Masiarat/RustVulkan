@@ -1,8 +1,7 @@
 use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
-use std::fmt::Debug;
 
-pub trait Destroyable: Debug {
+pub trait Destroyable {
     fn destroy(self: Box<Self>, context: &SharedContext) -> RendererResult<()>;
 }
 
@@ -28,5 +27,11 @@ impl DestroyQueue {
                 destroyable.destroy(context)
             })
             .collect()
+    }
+}
+
+impl<F: FnMut(&SharedContext) -> RendererResult<()>> Destroyable for F {
+    fn destroy(mut self: Box<Self>, context: &SharedContext) -> RendererResult<()> {
+        self(context)
     }
 }
