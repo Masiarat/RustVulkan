@@ -3,15 +3,15 @@ use ash::vk;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-pub struct Allocator {
+pub struct DescAllocator {
     pool: vk::DescriptorPool,
     allocated_layouts: HashSet<vk::DescriptorSetLayout>,
 
     context: Arc<SharedContext>
 }
 
-impl Allocator {
-    pub fn new(context: Arc<SharedContext>, max_sets: u32, pool_ratios: &[PoolSizeRatio], flags: vk::DescriptorPoolCreateFlags) -> Result<Allocator, vk::Result> {
+impl DescAllocator {
+    pub fn new(context: Arc<SharedContext>, max_sets: u32, pool_ratios: &[PoolSizeRatio], flags: vk::DescriptorPoolCreateFlags) -> Result<DescAllocator, vk::Result> {
         let pool_sizes = pool_ratios.iter().map(|x| {
             vk::DescriptorPoolSize::default().ty(x.ty).descriptor_count((max_sets as f32 * x.ratio) as u32)
         }).collect::<Vec<_>>();
@@ -24,7 +24,7 @@ impl Allocator {
             .pool_sizes(&pool_sizes);
 
         let pool = unsafe{ context.device.create_descriptor_pool(&pool_info, None)? };
-        Ok(Allocator{ context, allocated_layouts, pool })
+        Ok(DescAllocator { context, allocated_layouts, pool })
     }
 
     pub fn remove(&mut self, desc_set: vk::DescriptorSet) -> Result<(), vk::Result>{
@@ -46,7 +46,7 @@ impl Allocator {
     }
 }
 
-impl Drop for Allocator{
+impl Drop for DescAllocator {
     fn drop(&mut self) {
         unsafe {
             println!("Destroying descriptor set layouts");

@@ -32,7 +32,7 @@ pub struct Renderer {
     draw_image_descriptor: Cell<vk::DescriptorSet>,
     draw_image_descr_layout: Cell<vk::DescriptorSetLayout>,
     pub egui_painter: EguiPainter,
-    descriptor_allocator: Mutex<descriptor::Allocator>,
+    descriptor_allocator: Mutex<descriptor::DescAllocator>,
     draw_image: Image,
     immediate_submitter: ImmediateSubmitter,
     frames: Vec<Frame>,
@@ -65,7 +65,7 @@ impl Renderer {
             ty: vk::DescriptorType::STORAGE_IMAGE,
             ratio: 1.0,
         }];
-        let descr_alloc = descriptor::Allocator::new(
+        let descr_alloc = descriptor::DescAllocator::new(
             context.clone(),
             10,
             &sizes,
@@ -188,12 +188,13 @@ impl Renderer {
                 self.current_frame(frame_number).command_buffer,
             )
         };
+        self.egui_painter.update_textures(&self.immediate_submitter, textures_delta)?;
 
         let device = &self.context.device;
         let present_queue = self.context.present_queue;
 
         unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
-        self.egui_painter.update_textures(&self.immediate_submitter, textures_delta)?;
+        self.context.with_destroy_queue(|q| q.flush(&self.context))??;
         unsafe { device.reset_fences(&[render_fence])? };
 
         let (swap_chain_image_index, _) = unsafe {

@@ -1,8 +1,10 @@
+use crate::error::RendererResult;
+use crate::renderer::core::context::destroy_queue::Destroyable;
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::util;
 use ash::vk::{CommandBuffer, Extent2D, Format, ImageUsageFlags};
 use ash::{vk, Device};
-use gpu_allocator::vulkan::{Allocation, AllocationScheme, Allocator};
+use gpu_allocator::vulkan::{Allocation, AllocationScheme};
 use gpu_allocator::MemoryLocation;
 use std::error::Error;
 use std::sync::Arc;
@@ -79,9 +81,7 @@ impl Image {
         let device = &context.device;
         let image = unsafe { device.create_image(&image_create_info, None)? };
 
-        let allocation = context.with_allocator(|allocator| {
-            Self::allocate(device, allocator, image, name, MemoryLocation::GpuOnly)
-        })?;
+        let allocation = Self::allocate(&context, image, name, MemoryLocation::GpuOnly)?;
 
         unsafe { device.bind_image_memory(image, allocation.memory(), allocation.offset())? };
 
@@ -126,13 +126,12 @@ impl Image {
     }
 
     fn allocate(
-        device: &Device,
-        allocator: &mut Allocator,
+        context: &SharedContext,
         image: vk::Image,
         name: &str,
         location: MemoryLocation,
-    ) -> Result<Allocation, Box<dyn Error>> {
-        let requirements = unsafe { device.get_image_memory_requirements(image) };
+    ) -> RendererResult<Allocation> {
+        let requirements = unsafe { context.device.get_image_memory_requirements(image) };
 
         let allocation_create_desc = gpu_allocator::vulkan::AllocationCreateDesc {
             name,
@@ -141,28 +140,39 @@ impl Image {
             linear: false,
             allocation_scheme: AllocationScheme::DedicatedImage(image),
         };
-        let allocation = allocator.allocate(&allocation_create_desc)?;
-
-        Ok(allocation)
+        context.with_allocator(|allocator| allocator.allocate(&allocation_create_desc))?
     }
 }
 
 impl Drop for Image {
     fn drop(&mut self) {
-
-        let device = &self.context.device;
-        unsafe {
-            device.device_wait_idle().expect("Failed to wait for device idle");
-            println!("Destroying image view");
-            device.destroy_image_view(self.image_view, None) ;
-            println!("Destroying image");
-            device.destroy_image(self.image, None);
-        };
-
         if let Some(allocation) = self.allocation.take() {
-            if let Err(e) = self.context.free_allocation(allocation) {
-                println!("Failed to free buffer allocation: {}", e);
-        }}
+            let retired = RetiredImage { image: self.image, image_view: self.image_view, allocation };
+            if let Err(e) = self.context.with_destroy_queue(|queue| queue.push(Box::new(retired))){
+                println!("Failed to queue image for destruction: {}", e);
+            }
+        }
+        else {
+            println!("Error queueing image for destruction, allocation is None");
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RetiredImage {
+    image: vk::Image,
+    image_view: vk::ImageView,
+    allocation: Allocation,
+}
+
+impl Destroyable for RetiredImage {
+    fn destroy(self: Box<RetiredImage>, context: &SharedContext) -> RendererResult<()> {
+        let device = &context.device;
+        unsafe{
+            device.destroy_image_view(self.image_view, None);
+            device.destroy_image(self.image, None);
+        }
+        context.with_allocator(|allocator| allocator.free_allocation(self.allocation))?
     }
 }
 

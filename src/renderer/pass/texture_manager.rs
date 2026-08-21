@@ -2,7 +2,7 @@ use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
 use crate::renderer::resource::buffer::Buffer;
-use crate::renderer::resource::descriptor::Allocator;
+use crate::renderer::resource::descriptor::DescAllocator;
 use crate::renderer::resource::image::Image;
 use ash::vk;
 use std::collections::HashMap;
@@ -12,14 +12,14 @@ pub struct TextureManager {
     pub textures: HashMap<egui::TextureId, (Image, vk::DescriptorSet)>,
     sampler: vk::Sampler,
     descriptor_set_layout: vk::DescriptorSetLayout,
-    pub descriptor_allocator: Allocator,
+    pub descriptor_allocator: DescAllocator,
     context: Arc<SharedContext>,
 }
 
 impl TextureManager {
     pub fn new(
         context: Arc<SharedContext>,
-        descriptor_allocator: Allocator,
+        descriptor_allocator: DescAllocator,
         sampler: vk::Sampler,
         descriptor_set_layout: vk::DescriptorSetLayout,
     ) -> Self {

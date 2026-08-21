@@ -9,13 +9,13 @@ pub const WINDOW_WIDTH: u32 = 800;
 pub const WINDOW_HEIGHT: u32 = 600;
 
 pub struct App {
-    renderer: Option<Renderer>,
-    window: Option<Window>,
-    frame_number: RefCell<usize>,
-
     // Nowe pola dla egui
     egui_ctx: egui::Context,
     egui_state: Option<egui_winit::State>,
+
+    renderer: Option<Renderer>,
+    window: Option<Window>,
+    frame_number: RefCell<usize>,
 }
 
 impl App {

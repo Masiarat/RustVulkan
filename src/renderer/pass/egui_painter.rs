@@ -4,7 +4,7 @@ use super::texture_manager::TextureManager;
 use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
-use crate::renderer::resource::descriptor::{Allocator, PoolSizeRatio};
+use crate::renderer::resource::descriptor::{DescAllocator, PoolSizeRatio};
 use ash::vk;
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ impl EguiPainter {
     ) -> RendererResult<Self> {
         let pipeline = EguiPipeline::new(context.clone(), swapchain_format)?;
         let draw_context = DrawContext::new(context.clone())?;
-        let descriptor_allocator = Allocator::new(
+        let descriptor_allocator = DescAllocator::new(
             context.clone(),
             DESCRIPTOR_MAX_SETS,
             &[PoolSizeRatio {

@@ -7,6 +7,12 @@ pub enum RendererError {
     #[error("Vulkan error: {0}")]
     VulkanError(#[from] ash::vk::Result),
 
+    #[error("Gpu Allocator error: {0}")]
+    GpuAllocatorError(#[from] gpu_allocator::AllocationError),
+
+    #[error("Gpu Allocator error: {0}")]
+    GpuAllocatorMessage(String),
+
     #[error("Shader compilation failed: {0}")]
     ShaderError(String),
 
