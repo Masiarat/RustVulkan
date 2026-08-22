@@ -26,7 +26,7 @@ pub mod sync;
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
 pub struct Renderer {
-    compute_drawer: ComputeDrawer,
+    pub compute_drawer: ComputeDrawer,
     pub egui_painter: EguiPainter,
     descriptor_allocator: Mutex<descriptor::DescAllocator>,
     immediate_submitter: ImmediateSubmitter,

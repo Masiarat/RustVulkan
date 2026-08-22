@@ -6,11 +6,14 @@ use crate::renderer::resource::descriptor::DescAllocator;
 use crate::renderer::sync::draw_image::DrawImage;
 use crate::renderer::sync::swap_chain::SwapChainImage;
 use ash::vk;
+use std::cell::Cell;
 use std::mem;
 use std::sync::Arc;
 
 pub struct ComputeDrawer {
     pub gradient_pipeline: vk::Pipeline,
+    gradient_color_top: Cell<[f32; 4]>,
+    gradient_color_bottom: Cell<[f32; 4]>,
     gradient_pipeline_layout: vk::PipelineLayout,
     draw_image: DrawImage,
     context: Arc<SharedContext>,
@@ -89,6 +92,8 @@ impl ComputeDrawer {
 
         Ok(ComputeDrawer {
             gradient_pipeline,
+            gradient_color_top: Cell::default(),
+            gradient_color_bottom: Cell::default(),
             gradient_pipeline_layout,
             draw_image,
             context,
@@ -111,9 +116,10 @@ impl ComputeDrawer {
         );
 
         let mut push_constants = ComputePushConstants::default();
-        push_constants.data1 = [1.0, 0.0, 0.0, 1.0];
-        push_constants.data2 = [0.0, 0.0, 1.0, 1.0];
-
+        // push_constants.data1 = [1.0, 0.0, 0.0, 1.0];
+        // push_constants.data2 = [0.0, 0.0, 1.0, 1.0];
+        push_constants.data1 = self.gradient_color_top.get();
+        push_constants.data2 = self.gradient_color_bottom.get();
 
         unsafe {
             device.cmd_bind_pipeline(cmb, vk::PipelineBindPoint::COMPUTE, self.gradient_pipeline);
@@ -159,6 +165,14 @@ impl ComputeDrawer {
             .image
             .copy_to(cmb, current_swap_chain_image.image, image_extent);
     }
+
+    pub fn gradient_color_top_rgb(&mut self) -> &mut [f32; 3] {
+        self.gradient_color_top.get_mut().as_rgb()
+    }
+    
+    pub fn gradient_color_bottom_rgb(&mut self) -> &mut [f32; 3] {
+        self.gradient_color_bottom.get_mut().as_rgb()
+    }
 }
 
 impl Drop for ComputeDrawer {
@@ -172,6 +186,16 @@ impl Drop for ComputeDrawer {
                 .device
                 .destroy_pipeline_layout(self.gradient_pipeline_layout, None);
         }
+    }
+}
+
+trait AsRgb<T> {
+    fn as_rgb(&mut self) -> &mut T;
+}
+
+impl AsRgb<[f32; 3]> for [f32; 4] {
+    fn as_rgb(&mut self) -> &mut [f32; 3] {
+        <&mut [f32; 3]>::try_from(&mut self[0..3]).unwrap()
     }
 }
 
