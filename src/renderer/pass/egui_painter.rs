@@ -1,12 +1,16 @@
-use super::drawing::DrawContext;
-use super::pipeline::EguiPipeline;
-use super::texture_manager::{EguiTexture, TextureManager};
 use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
+use crate::renderer::pass::egui_painter::texture_manager::{EguiTexture, TextureManager};
 use crate::renderer::resource::descriptor::{DescAllocator, PoolSizeRatio};
 use ash::vk;
+use drawing::DrawContext;
+use pipeline::EguiPipeline;
 use std::sync::Arc;
+
+pub mod drawing;
+pub mod pipeline;
+pub mod texture_manager;
 
 pub struct EguiPainter {
     draw_context: DrawContext,

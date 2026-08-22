@@ -1,6 +1,6 @@
-use ash::vk::ShaderModule;
-use ash::{vk, Device};
 use crate::error::RendererResult;
+use ash::vk::ShaderModule;
+use ash::{Device, vk};
 use std::fs;
 use std::path::Path;
 
@@ -91,7 +91,11 @@ impl PipelineBuilder {
         self
     }
 
-    pub fn set_cull_mode(mut self, cull_mode: vk::CullModeFlags, front_face: vk::FrontFace) -> Self {
+    pub fn set_cull_mode(
+        mut self,
+        cull_mode: vk::CullModeFlags,
+        front_face: vk::FrontFace,
+    ) -> Self {
         self.rasterizer = self.rasterizer.cull_mode(cull_mode).front_face(front_face);
         self
     }
@@ -103,7 +107,8 @@ impl PipelineBuilder {
 
     // Ta funkcja jest KLUCZOWA dla EGUI!
     pub fn enable_blending_premultiplied_alpha(mut self) -> Self {
-        self.color_blend_attachment = self.color_blend_attachment
+        self.color_blend_attachment = self
+            .color_blend_attachment
             .blend_enable(true)
             .src_color_blend_factor(vk::BlendFactor::ONE)
             .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
@@ -125,7 +130,8 @@ impl PipelineBuilder {
     }
 
     pub fn disable_depthtest(mut self) -> Self {
-        self.depth_stencil = self.depth_stencil
+        self.depth_stencil = self
+            .depth_stencil
             .depth_test_enable(false)
             .depth_write_enable(false)
             .depth_compare_op(vk::CompareOp::NEVER);
@@ -144,8 +150,8 @@ impl PipelineBuilder {
             .scissor_count(1);
 
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state_info = vk::PipelineDynamicStateCreateInfo::default()
-            .dynamic_states(&dynamic_states);
+        let dynamic_state_info =
+            vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
         let color_blend_attachments = [self.color_blend_attachment];
         let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
@@ -184,7 +190,13 @@ impl PipelineBuilder {
                 std::slice::from_ref(&pipeline_info),
                 None,
             )
-        }.map_err(|e| crate::error::RendererError::PipelineError(format!("Failed to create graphics pipeline: {:?}", e.1)))?[0];
+        }
+        .map_err(|e| {
+            crate::error::RendererError::PipelineError(format!(
+                "Failed to create graphics pipeline: {:?}",
+                e.1
+            ))
+        })?[0];
 
         Ok(pipeline)
     }
@@ -192,8 +204,9 @@ impl PipelineBuilder {
 
 /// Load a SPIR-V file from the disk and create a `vk::ShaderModule`.
 pub unsafe fn load_shader_module(device: &Device, path: &Path) -> RendererResult<ShaderModule> {
-    let bytes = fs::read(path)
-        .map_err(|e| crate::error::RendererError::ShaderError(format!("Failed to read shader file: {}", e)))?;
+    let bytes = fs::read(path).map_err(|e| {
+        crate::error::RendererError::ShaderError(format!("Failed to read shader file: {}", e))
+    })?;
     unsafe { load_shader_module_from_bytes(device, &bytes) }
 }
 
@@ -203,9 +216,10 @@ pub unsafe fn load_shader_module_from_bytes(
     spirv: &[u8],
 ) -> RendererResult<vk::ShaderModule> {
     if spirv.len() % std::mem::size_of::<u32>() != 0 {
-        return Err(crate::error::RendererError::ShaderError(
-            format!("SPIR-V byte length {} is not a multiple of 4", spirv.len()),
-        ));
+        return Err(crate::error::RendererError::ShaderError(format!(
+            "SPIR-V byte length {} is not a multiple of 4",
+            spirv.len()
+        )));
     }
     let code: &[u32] = unsafe {
         std::slice::from_raw_parts(

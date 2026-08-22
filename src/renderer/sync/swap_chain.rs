@@ -130,7 +130,7 @@ pub(crate) struct SwapChainImage {
 }
 
 impl SwapChainImage {
-    pub fn transition_image(&self, context: &SharedContext, command_buffer: vk::CommandBuffer, current_layout: vk::ImageLayout, new_layout: vk::ImageLayout){
+    pub fn transition_layout(&self, context: &SharedContext, command_buffer: vk::CommandBuffer, current_layout: vk::ImageLayout, new_layout: vk::ImageLayout){
         transition_image(context, command_buffer, self.image, current_layout, new_layout)
     }
 }

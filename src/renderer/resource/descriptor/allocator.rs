@@ -6,7 +6,6 @@ use std::sync::Arc;
 pub struct DescAllocator {
     pool: vk::DescriptorPool,
     allocated_layouts: HashSet<vk::DescriptorSetLayout>,
-
     context: Arc<SharedContext>
 }
 

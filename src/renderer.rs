@@ -1,15 +1,14 @@
-use crate::app::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::error::{RendererError, RendererResult};
-use crate::renderer::pipeline::load_shader_module;
+use crate::renderer::pass::compute_drawer::ComputeDrawer;
 use ash::vk;
 use core::context::SharedContext;
 use core::immediate_submitter::ImmediateSubmitter;
-use core::util::{standard_command_buffer_begin_info, standard_command_buffer_submit_info, standard_submit_info};
+use core::util::{
+    standard_command_buffer_begin_info, standard_command_buffer_submit_info, standard_submit_info,
+};
 use pass::egui_painter::EguiPainter;
 use resource::descriptor;
 use resource::descriptor::PoolSizeRatio;
-use resource::image::Image;
-use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sync::frame::Frame;
@@ -18,22 +17,18 @@ use winit::window::Window;
 
 const FRAME_COUNT: usize = 2;
 
-mod pipeline;
 pub mod core;
+pub mod pass;
+mod pipeline;
 pub mod resource;
 pub mod sync;
-pub mod pass;
 
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
 pub struct Renderer {
-    gradient_pipeline: Cell<vk::Pipeline>,
-    gradient_pipeline_layout: Cell<vk::PipelineLayout>,
-    draw_image_descriptor: Cell<vk::DescriptorSet>,
-    draw_image_descr_layout: Cell<vk::DescriptorSetLayout>,
+    compute_drawer: ComputeDrawer,
     pub egui_painter: EguiPainter,
     descriptor_allocator: Mutex<descriptor::DescAllocator>,
-    draw_image: Image,
     immediate_submitter: ImmediateSubmitter,
     frames: Vec<Frame>,
     swap_chain: SwapChain,
@@ -48,24 +43,21 @@ impl Renderer {
     pub fn new(window_width: u32, window_height: u32, window: &Window) -> RendererResult<Self> {
         let context = Arc::new(SharedContext::new(window));
         let swap_chain = SwapChain::new(window_width, window_height, context.clone());
+
         let frames = (0..FRAME_COUNT)
-            .map(|_| Frame::new(context.clone()).map_err(|e| RendererError::FrameSyncError(format!("{:?}", e))))
+            .map(|_| {
+                Frame::new(context.clone())
+                    .map_err(|e| RendererError::FrameSyncError(format!("{:?}", e)))
+            })
             .collect::<RendererResult<Vec<_>>>()?;
+
         let immediate_submitter = ImmediateSubmitter::new(context.clone())?;
-        let draw_image = Image::new_display(
-            context.clone(),
-            vk::Extent2D {
-                width: window_width,
-                height: window_height,
-            },
-            "draw_image",
-        ).map_err(|e| RendererError::ImageAllocationError(e.to_string()))?;
 
         let sizes = vec![PoolSizeRatio {
             ty: vk::DescriptorType::STORAGE_IMAGE,
             ratio: 1.0,
         }];
-        let descr_alloc = descriptor::DescAllocator::new(
+        let mut descr_alloc = descriptor::DescAllocator::new(
             context.clone(),
             10,
             &sizes,
@@ -74,101 +66,24 @@ impl Renderer {
 
         let egui_painter = EguiPainter::new(context.clone(), swap_chain.image_format)?;
 
-        let mut renderer = Renderer {
-            gradient_pipeline: Cell::new(Default::default()),
-            gradient_pipeline_layout: Cell::new(Default::default()),
-            draw_image_descriptor: Cell::default(),
-            draw_image,
+        let compute_drawer = ComputeDrawer::new(
+            context.clone(),
+            vk::Extent2D {
+                width: window_width,
+                height: window_height,
+            },
+            &mut descr_alloc,
+        )?;
+
+        Ok(Renderer {
+            compute_drawer,
             context,
             swap_chain,
             frames,
             descriptor_allocator: Mutex::new(descr_alloc),
-            draw_image_descr_layout: Cell::default(),
             immediate_submitter,
             egui_painter,
-        };
-        renderer.init()?;
-        Ok(renderer)
-    }
-
-    pub fn init(&mut self) -> RendererResult<()> {
-        self.init_descriptors()?;
-        self.init_pipelines()?;
-        Ok(())
-    }
-
-    pub fn init_descriptors(&mut self) -> RendererResult<()> {
-        let mut builder = descriptor::LayoutBuilder::new();
-        let device = &self.context.device;
-        builder.add_binding(0, vk::DescriptorType::STORAGE_IMAGE);
-        let layout = unsafe {
-            builder.build(
-                device,
-                vk::ShaderStageFlags::COMPUTE,
-                vk::DescriptorSetLayoutCreateFlags::empty(),
-            )?
-        };
-        self.draw_image_descr_layout = Cell::from(layout);
-
-        let mut alloc_guard = self
-            .descriptor_allocator
-            .lock()
-            .map_err(|_| RendererError::DescriptorAllocationError("Mutex poisoned".into()))?;
-        let descriptor = alloc_guard.allocate(self.draw_image_descr_layout.get())?;
-        self.draw_image_descriptor = Cell::from(descriptor);
-
-        let image_info = vk::DescriptorImageInfo::default()
-            .image_layout(vk::ImageLayout::GENERAL)
-            .image_view(self.draw_image.image_view);
-
-        let image_infos = &[image_info];
-        let draw_image_write = vk::WriteDescriptorSet::default()
-            .dst_binding(0)
-            .dst_set(self.draw_image_descriptor.get())
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .image_info(image_infos);
-
-        unsafe { device.update_descriptor_sets(&[draw_image_write], &[]) }
-        Ok(())
-    }
-
-    pub fn init_pipelines(&mut self) -> RendererResult<()> {
-        self.init_background_pipelines()
-    }
-
-    pub fn init_background_pipelines(&mut self) -> RendererResult<()> {
-        let descriptor_layouts = &[self.draw_image_descr_layout.get()];
-        let compute_layout = vk::PipelineLayoutCreateInfo::default().set_layouts(descriptor_layouts);
-        let device = &self.context.device;
-
-        let gradient_pipeline_layout =
-            unsafe { device.create_pipeline_layout(&compute_layout, None)? };
-        self.gradient_pipeline_layout = Cell::from(gradient_pipeline_layout);
-
-        let compute_draw_shader = unsafe {
-            load_shader_module(
-                device,
-                concat!(env!("OUT_DIR"), "/gradient.spv").as_ref(),
-            )?
-        };
-
-        let stage_info = vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::COMPUTE)
-            .module(compute_draw_shader)
-            .name(c"main");
-
-        let compute_draw_pipeline_info = vk::ComputePipelineCreateInfo::default()
-            .stage(stage_info)
-            .layout(gradient_pipeline_layout);
-
-        let pipelines = unsafe {
-            device.create_compute_pipelines(vk::PipelineCache::null(), &[compute_draw_pipeline_info], None)
-                .map_err(|(_, e)| e)?
-        };
-        self.gradient_pipeline = Cell::from(pipelines[0]);
-        unsafe { device.destroy_shader_module(compute_draw_shader, None) };
-        Ok(())
+        })
     }
 
     pub fn draw(
@@ -179,7 +94,6 @@ impl Renderer {
         screen_size: [u32; 2],
         pixels_per_point: f32,
     ) -> RendererResult<()> {
-
         let (render_fence, swap_chain_semaphore, cmb) = {
             self.current_frame(frame_number);
             (
@@ -190,14 +104,18 @@ impl Renderer {
         };
         let frame_index = frame_number % FRAME_COUNT;
 
-
         let device = &self.context.device;
         let present_queue = self.context.present_queue;
 
         unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
-        self.context.with_destroy_queue(|q| q.flush(&self.context))??;
+        self.context
+            .with_destroy_queue(|q| q.flush(&self.context))??;
         self.egui_painter.cleanup(frame_index)?;
-        self.egui_painter.update_textures(&self.immediate_submitter, textures_delta, frame_index)?;
+        self.egui_painter.update_textures(
+            &self.immediate_submitter,
+            textures_delta,
+            frame_index,
+        )?;
         unsafe { device.reset_fences(&[render_fence])? };
 
         let (swap_chain_image_index, _) = unsafe {
@@ -217,56 +135,9 @@ impl Renderer {
             standard_command_buffer_begin_info(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { device.begin_command_buffer(cmb, &command_buffer_begin_info)? }
 
-        self.draw_image
-            .transition_layout(cmb, vk::ImageLayout::UNDEFINED, vk::ImageLayout::GENERAL);
+        self.compute_drawer.draw(cmb, &current_swap_chain_image, self.swap_chain.image_extent);
 
-        unsafe {
-            device.cmd_bind_pipeline(
-                cmb,
-                vk::PipelineBindPoint::COMPUTE,
-                self.gradient_pipeline.get(),
-            )
-        };
-
-        unsafe {
-            device.cmd_bind_descriptor_sets(
-                cmb,
-                vk::PipelineBindPoint::COMPUTE,
-                self.gradient_pipeline_layout.get(),
-                0,
-                &[self.draw_image_descriptor.get()],
-                &[],
-            )
-        };
-
-        unsafe {
-            device.cmd_dispatch(
-                cmb,
-                (WINDOW_WIDTH as f32 / 16.0).ceil() as u32,
-                (WINDOW_HEIGHT as f32 / 16.0).ceil() as u32,
-                1,
-            )
-        };
-
-        self.draw_image.transition_layout(
-            cmb,
-            vk::ImageLayout::GENERAL,
-            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-        );
-
-        current_swap_chain_image.transition_image(
-            &self.context,
-            cmb,
-            vk::ImageLayout::UNDEFINED,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        );
-        self.draw_image.copy_to(
-            cmb,
-            current_swap_chain_image.image,
-            self.swap_chain.image_extent,
-        );
-
-        current_swap_chain_image.transition_image(
+        current_swap_chain_image.transition_layout(
             &self.context,
             cmb,
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -289,11 +160,12 @@ impl Renderer {
 
         unsafe { device.cmd_begin_rendering(cmb, &rendering_info) };
 
-        self.egui_painter.paint(cmb, primitives, screen_size, pixels_per_point)?;
+        self.egui_painter
+            .paint(cmb, primitives, screen_size, pixels_per_point)?;
 
         unsafe { device.cmd_end_rendering(cmb) };
 
-        current_swap_chain_image.transition_image(
+        current_swap_chain_image.transition_layout(
             &self.context,
             cmb,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
@@ -342,9 +214,6 @@ impl Drop for Renderer {
             device
                 .device_wait_idle()
                 .expect("Failed to wait for device idle");
-
-            device.destroy_pipeline(self.gradient_pipeline.get(), None);
-            device.destroy_pipeline_layout(self.gradient_pipeline_layout.get(), None);
         }
     }
 }
