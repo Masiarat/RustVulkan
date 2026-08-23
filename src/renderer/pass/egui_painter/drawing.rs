@@ -1,4 +1,5 @@
 use crate::error::RendererResult;
+use crate::renderer::pass::egui_painter::pipeline::EguiPushConstants;
 use crate::renderer::resource::resizable_buffer::ResizableBuffer;
 use ash::vk;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ impl DrawContext {
         let vertex_buffer = ResizableBuffer::new(
             context.clone(),
             2,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
             "egui_vertex_buffer",
             gpu_allocator::MemoryLocation::CpuToGpu,
         ).map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
@@ -103,14 +104,15 @@ impl DrawContext {
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
 
-            let screen_size_points = [
-                screen_size_physical[0] as f32 / pixels_per_point,
-                screen_size_physical[1] as f32 / pixels_per_point,
-            ];
-            let pc_data = std::slice::from_raw_parts(
-                screen_size_points.as_ptr() as *const u8,
-                std::mem::size_of::<[f32; 2]>(),
-            );
+            // let screen_size_points = [
+            //     screen_size_physical[0] as f32 / pixels_per_point,
+            //     screen_size_physical[1] as f32 / pixels_per_point,
+            // ];
+            let device_address_info = vk::BufferDeviceAddressInfo::default().buffer(self.vertex_buffer.buffer());
+            let vertex_address = device.get_buffer_device_address(&device_address_info);
+            let pc = EguiPushConstants {screen_size: screen_size_physical.map(|x| x as f32), vertex_buffer: vertex_address };
+            let pc_data = bytemuck::bytes_of(&pc);
+
             device.cmd_push_constants(
                 cmd,
                 pipeline_layout,
@@ -129,7 +131,7 @@ impl DrawContext {
             };
             device.cmd_set_viewport(cmd, 0, &[viewport]);
 
-            device.cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer.buffer()], &[0]);
+            // device.cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer.buffer()], &[0]);
             device.cmd_bind_index_buffer(cmd, self.index_buffer.buffer(), 0, vk::IndexType::UINT32);
 
             let mut vertex_offset = 0;

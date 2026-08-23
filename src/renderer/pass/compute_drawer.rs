@@ -92,8 +92,8 @@ impl ComputeDrawer {
 
         Ok(ComputeDrawer {
             gradient_pipeline,
-            gradient_color_top: Cell::default(),
-            gradient_color_bottom: Cell::default(),
+            gradient_color_top: Cell::from([1.0, 0.0, 0.0, 1.0]),
+            gradient_color_bottom: Cell::from([0.0, 0.0, 1.0, 1.0]),
             gradient_pipeline_layout,
             draw_image,
             context,

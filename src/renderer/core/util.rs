@@ -2,12 +2,20 @@
 
 use ash::vk;
 use ash::vk::{CommandBufferBeginInfo, CommandBufferSubmitInfo, Offset3D, SemaphoreSubmitInfo};
+use std::ffi::CStr;
 
 pub fn to_offset_zero(src_extent: vk::Extent2D) -> [Offset3D; 2] {
     [
         Offset3D::default().x(0).y(0).z(0),
         Offset3D::default().x(src_extent.width as i32).y(src_extent.height as i32).z(1),
     ]
+}
+
+pub fn standard_pipeline_shader_stage_create_info(stage: vk::ShaderStageFlags, module: vk::ShaderModule, name: &'static CStr) -> vk::PipelineShaderStageCreateInfo<'static>{
+    vk::PipelineShaderStageCreateInfo::default()
+        .stage(stage)
+        .module(module)
+        .name(name)
 }
 
 pub fn standard_sampler_create_info() -> vk::SamplerCreateInfo<'static>{

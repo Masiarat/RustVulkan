@@ -1,11 +1,10 @@
 use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::util::standard_sampler_create_info;
-use crate::renderer::pipeline::{load_shader_module, PipelineBuilder};
+use crate::renderer::pipeline::{PipelineBuilder, load_shader_module};
 use ash::vk;
-use std::ffi::CStr;
+use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
-
 
 pub struct EguiPipeline {
     pub pipeline_layout: vk::PipelineLayout,
@@ -21,6 +20,9 @@ impl EguiPipeline {
         swapchain_format: vk::Format,
     ) -> RendererResult<Self> {
         let device = &context.device;
+
+        let path = concat!(env!("OUT_DIR"), "/egui.spv").as_ref();
+        let egui_shader_module = unsafe { load_shader_module(device, path)? };
 
         let bindings = [vk::DescriptorSetLayoutBinding::default()
             .binding(0)
@@ -39,7 +41,7 @@ impl EguiPipeline {
         let push_constant_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX)
             .offset(0)
-            .size(8);
+            .size(size_of::<EguiPushConstants>() as u32);
 
         let set_layouts = [descriptor_set_layout];
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
@@ -49,56 +51,27 @@ impl EguiPipeline {
         let pipeline_layout =
             unsafe { device.create_pipeline_layout(&pipeline_layout_info, None)? };
 
-        let path = concat!(env!("OUT_DIR"), "/egui.spv").as_ref();
-        let egui_shader_module = unsafe { load_shader_module(device, path)? };
-
-        let vertex_entry = CStr::from_bytes_with_nul(b"vertexMain\0")
-            .map_err(|_| crate::error::RendererError::ShaderError("Invalid vertex entry point".into()))?;
-        let fragment_entry = CStr::from_bytes_with_nul(b"fragmentMain\0")
-            .map_err(|_| crate::error::RendererError::ShaderError("Invalid fragment entry point".into()))?;
-
-        let vertex_stage = vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::VERTEX)
-            .module(egui_shader_module)
-            .name(vertex_entry);
-
-        let fragment_stage = vk::PipelineShaderStageCreateInfo::default()
-            .stage(vk::ShaderStageFlags::FRAGMENT)
-            .module(egui_shader_module)
-            .name(fragment_entry);
-
-        let vertex_binding = [vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(std::mem::size_of::<egui::epaint::Vertex>() as u32)
-            .input_rate(vk::VertexInputRate::VERTEX)];
-
-        let vertex_attributes = [
-            vk::VertexInputAttributeDescription::default()
-                .binding(0)
-                .location(0)
-                .format(vk::Format::R32G32_SFLOAT)
-                .offset(0),
-            vk::VertexInputAttributeDescription::default()
-                .binding(0)
-                .location(1)
-                .format(vk::Format::R32G32_SFLOAT)
-                .offset(8),
-            vk::VertexInputAttributeDescription::default()
-                .binding(0)
-                .location(2)
-                .format(vk::Format::R8G8B8A8_UNORM)
-                .offset(16),
-        ];
-
-        let pipeline = PipelineBuilder::new()
-            .set_pipeline_layout(pipeline_layout)
-            .set_color_attachment_format(swapchain_format)
-            .disable_depthtest()
+        let pipeline = PipelineBuilder::default()
+            .layout(pipeline_layout)
+            .color_attachment_format(swapchain_format)
+            .disable_depth_test()
+            .input_topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::NONE, vk::FrontFace::COUNTER_CLOCKWISE)
+            .multisampling_none()
             .enable_blending_premultiplied_alpha()
-            .set_vertex_input(&vertex_binding, &vertex_attributes)
-            .add_shader_stage(vertex_stage)
-            .add_shader_stage(fragment_stage)
+            .shaders(egui_shader_module)
             .build(device)?;
+
+        // let pipeline = PipelineBuilder::default()
+        //     .set_pipeline_layout(pipeline_layout)
+        //     .set_color_attachment_format(swapchain_format)
+        //     .disable_depthtest()
+        //     .enable_blending_premultiplied_alpha()
+        //     .set_vertex_input(&vertex_binding, &vertex_attributes)
+        //     .add_shader_stage(vertex_stage)
+        //     .add_shader_stage(fragment_stage)
+        //     .build(device)?;
 
         unsafe {
             device.destroy_shader_module(egui_shader_module, None);
@@ -112,6 +85,13 @@ impl EguiPipeline {
             context,
         })
     }
+}
+
+#[repr(C)]
+#[derive(Pod, Copy, Clone, Zeroable)]
+pub struct EguiPushConstants {
+    pub screen_size: [f32; 2],
+    pub vertex_buffer: vk::DeviceAddress,
 }
 
 impl Drop for EguiPipeline {

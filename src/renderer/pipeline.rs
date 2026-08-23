@@ -1,9 +1,11 @@
 use crate::error::RendererResult;
-use ash::vk::ShaderModule;
+use crate::renderer::core::util::standard_pipeline_shader_stage_create_info;
+use ash::vk::{PipelineCache, ShaderModule};
 use ash::{Device, vk};
 use std::fs;
 use std::path::Path;
 
+#[derive(Default)]
 pub struct PipelineBuilder {
     shader_stages: Vec<vk::PipelineShaderStageCreateInfo<'static>>,
     input_assembly: vk::PipelineInputAssemblyStateCreateInfo<'static>,
@@ -12,100 +14,112 @@ pub struct PipelineBuilder {
     multisampling: vk::PipelineMultisampleStateCreateInfo<'static>,
     pipeline_layout: vk::PipelineLayout,
     depth_stencil: vk::PipelineDepthStencilStateCreateInfo<'static>,
+    render_info: vk::PipelineRenderingCreateInfo<'static>,
     color_attachment_format: vk::Format,
     depth_attachment_format: vk::Format,
-
-    // Dla egui (oraz innych modeli 3D w przyszłości) potrzebujemy opisu wierzchołków
-    vertex_bindings: Vec<vk::VertexInputBindingDescription>,
-    vertex_attributes: Vec<vk::VertexInputAttributeDescription>,
 }
 
 impl PipelineBuilder {
-    pub fn new() -> Self {
-        Self {
-            shader_stages: Vec::new(),
-            input_assembly: vk::PipelineInputAssemblyStateCreateInfo::default()
-                .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
-                .primitive_restart_enable(false),
-            rasterizer: vk::PipelineRasterizationStateCreateInfo::default()
-                .polygon_mode(vk::PolygonMode::FILL)
-                .line_width(1.0)
-                .cull_mode(vk::CullModeFlags::NONE)
-                .front_face(vk::FrontFace::CLOCKWISE)
-                .depth_clamp_enable(false)
-                .depth_bias_enable(false),
-            color_blend_attachment: vk::PipelineColorBlendAttachmentState::default()
-                .color_write_mask(
-                    vk::ColorComponentFlags::R
-                        | vk::ColorComponentFlags::G
-                        | vk::ColorComponentFlags::B
-                        | vk::ColorComponentFlags::A,
-                )
-                .blend_enable(false),
-            multisampling: vk::PipelineMultisampleStateCreateInfo::default()
-                .sample_shading_enable(false)
-                .rasterization_samples(vk::SampleCountFlags::TYPE_1)
-                .min_sample_shading(1.0)
-                .alpha_to_coverage_enable(false)
-                .alpha_to_one_enable(false),
-            pipeline_layout: vk::PipelineLayout::null(),
-            depth_stencil: vk::PipelineDepthStencilStateCreateInfo::default()
-                .depth_test_enable(false)
-                .depth_write_enable(false)
-                .depth_compare_op(vk::CompareOp::ALWAYS)
-                .depth_bounds_test_enable(false)
-                .stencil_test_enable(false)
-                .front(vk::StencilOpState::default())
-                .back(vk::StencilOpState::default())
-                .min_depth_bounds(0.0)
-                .max_depth_bounds(1.0),
-            color_attachment_format: vk::Format::UNDEFINED,
-            depth_attachment_format: vk::Format::UNDEFINED,
-            vertex_bindings: Vec::new(),
-            vertex_attributes: Vec::new(),
+    pub fn build(self, device: &Device) -> RendererResult<vk::Pipeline> {
+        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+            .viewport_count(1)
+            .scissor_count(1);
+
+        let binding = [self.color_blend_attachment];
+        let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
+            .logic_op_enable(false)
+            .logic_op(vk::LogicOp::COPY)
+            .attachments(&binding);
+
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default();
+
+        let state = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_info = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&state);
+
+        // CRITICAL: Keep color_formats in scope for render_info
+        let color_formats = [self.color_attachment_format];
+        let mut render_info = vk::PipelineRenderingCreateInfo::default()
+            .color_attachment_formats(&color_formats);
+        
+        if self.depth_attachment_format != vk::Format::UNDEFINED {
+            render_info = render_info.depth_attachment_format(self.depth_attachment_format);
         }
+
+        let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+            .push_next(&mut render_info)
+            .stages(&self.shader_stages)
+            .vertex_input_state(&vertex_input_info)
+            .input_assembly_state(&self.input_assembly)
+            .viewport_state(&viewport_state)
+            .rasterization_state(&self.rasterizer)
+            .multisample_state(&self.multisampling)
+            .color_blend_state(&color_blending)
+            .depth_stencil_state(&self.depth_stencil)
+            .layout(self.pipeline_layout)
+            .dynamic_state(&dynamic_info);
+
+        let pipelines = unsafe {
+            device
+                .create_graphics_pipelines(PipelineCache::null(), &[pipeline_info], None)
+                .map_err(|(_, e)| crate::error::RendererError::PipelineError(e.to_string()))?
+        };
+        Ok(pipelines[0])
     }
 
-    pub fn set_pipeline_layout(mut self, layout: vk::PipelineLayout) -> Self {
+    pub fn layout(mut self, layout: vk::PipelineLayout) -> Self {
         self.pipeline_layout = layout;
         self
     }
 
-    pub fn set_vertex_input(
-        mut self,
-        bindings: &[vk::VertexInputBindingDescription],
-        attributes: &[vk::VertexInputAttributeDescription],
-    ) -> Self {
-        self.vertex_bindings = bindings.to_vec();
-        self.vertex_attributes = attributes.to_vec();
+    pub fn shaders(mut self, shader_module: ShaderModule) -> Self {
+        self.shader_stages
+            .push(standard_pipeline_shader_stage_create_info(
+                vk::ShaderStageFlags::VERTEX,
+                shader_module,
+                c"vertex",
+            ));
+        self.shader_stages
+            .push(standard_pipeline_shader_stage_create_info(
+                vk::ShaderStageFlags::FRAGMENT,
+                shader_module,
+                c"fragment",
+            ));
         self
     }
 
-    pub fn set_input_topology(mut self, topology: vk::PrimitiveTopology) -> Self {
-        self.input_assembly = self.input_assembly.topology(topology);
+    pub fn input_topology(mut self, topology: vk::PrimitiveTopology) -> Self {
+        self.input_assembly = self
+            .input_assembly
+            .topology(topology)
+            .primitive_restart_enable(false);
         self
     }
 
-    pub fn set_polygon_mode(mut self, mode: vk::PolygonMode) -> Self {
-        self.rasterizer = self.rasterizer.polygon_mode(mode);
+    pub fn polygon_mode(mut self, mode: vk::PolygonMode) -> Self {
+        self.rasterizer = self.rasterizer.polygon_mode(mode).line_width(1.0);
         self
     }
 
-    pub fn set_cull_mode(
-        mut self,
-        cull_mode: vk::CullModeFlags,
-        front_face: vk::FrontFace,
-    ) -> Self {
-        self.rasterizer = self.rasterizer.cull_mode(cull_mode).front_face(front_face);
+    pub fn cull_mode(mut self, mode: vk::CullModeFlags, front_face: vk::FrontFace) -> Self {
+        self.rasterizer = self.rasterizer.cull_mode(mode).front_face(front_face);
         self
     }
 
-    pub fn disable_blending(mut self) -> Self {
-        self.color_blend_attachment = self.color_blend_attachment.blend_enable(false);
+    pub fn multisampling_none(mut self) -> Self {
+        self.multisampling = self
+            .multisampling
+            .sample_shading_enable(false)
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+            .min_sample_shading(1.0)
+            .alpha_to_coverage_enable(false)
+            .alpha_to_one_enable(false);
         self
     }
 
-    // Ta funkcja jest KLUCZOWA dla EGUI!
+    // CRITICAL: For egui's premultiplied alpha blending!
+    // egui pre-multiplies colors: RGB is already multiplied by Alpha
+    // Correct blend: src = ONE (not SRC_ALPHA, because already premultiplied)
+    // dst = ONE_MINUS_SRC_ALPHA
     pub fn enable_blending_premultiplied_alpha(mut self) -> Self {
         self.color_blend_attachment = self
             .color_blend_attachment
@@ -113,92 +127,43 @@ impl PipelineBuilder {
             .src_color_blend_factor(vk::BlendFactor::ONE)
             .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
             .color_blend_op(vk::BlendOp::ADD)
-            .src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
-            .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
             .alpha_blend_op(vk::BlendOp::ADD);
         self
     }
 
-    pub fn set_color_attachment_format(mut self, format: vk::Format) -> Self {
+    pub fn disable_blending(mut self) -> Self {
+        self.color_blend_attachment = self
+            .color_blend_attachment
+            .blend_enable(false)
+            .color_write_mask(vk::ColorComponentFlags::RGBA);
+        self
+    }
+
+    pub fn color_attachment_format(mut self, format: vk::Format) -> Self {
         self.color_attachment_format = format;
         self
     }
 
-    pub fn set_depth_format(mut self, format: vk::Format) -> Self {
+    pub fn depth_format(mut self, format: vk::Format) -> Self {
         self.depth_attachment_format = format;
         self
     }
 
-    pub fn disable_depthtest(mut self) -> Self {
+    pub fn disable_depth_test(mut self) -> Self {
         self.depth_stencil = self
             .depth_stencil
             .depth_test_enable(false)
             .depth_write_enable(false)
-            .depth_compare_op(vk::CompareOp::NEVER);
+            .depth_compare_op(vk::CompareOp::NEVER)
+            .depth_bounds_test_enable(false)
+            .stencil_test_enable(false)
+            .front(vk::StencilOpState::default())
+            .back(vk::StencilOpState::default())
+            .min_depth_bounds(0.0)
+            .max_depth_bounds(1.0);
         self
-    }
-
-    pub fn add_shader_stage(mut self, stage: vk::PipelineShaderStageCreateInfo<'static>) -> Self {
-        self.shader_stages.push(stage);
-        self
-    }
-
-    // GŁÓWNA FUNKCJA BUDUJĄCA
-    pub fn build(self, device: &Device) -> RendererResult<vk::Pipeline> {
-        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
-            .viewport_count(1)
-            .scissor_count(1);
-
-        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state_info =
-            vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
-
-        let color_blend_attachments = [self.color_blend_attachment];
-        let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
-            .logic_op_enable(false)
-            .logic_op(vk::LogicOp::COPY)
-            .attachments(&color_blend_attachments);
-
-        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo::default()
-            .vertex_binding_descriptions(&self.vertex_bindings)
-            .vertex_attribute_descriptions(&self.vertex_attributes);
-
-        let color_attachment_formats = [self.color_attachment_format];
-        let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
-            .color_attachment_formats(&color_attachment_formats);
-
-        if self.depth_attachment_format != vk::Format::UNDEFINED {
-            rendering_info = rendering_info.depth_attachment_format(self.depth_attachment_format);
-        }
-
-        let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
-            .push_next(&mut rendering_info) // Wstrzykujemy Dynamic Rendering!
-            .stages(&self.shader_stages)
-            .vertex_input_state(&vertex_input_info)
-            .input_assembly_state(&self.input_assembly)
-            .viewport_state(&viewport_state)
-            .rasterization_state(&self.rasterizer)
-            .multisample_state(&self.multisampling)
-            .depth_stencil_state(&self.depth_stencil)
-            .color_blend_state(&color_blending)
-            .dynamic_state(&dynamic_state_info)
-            .layout(self.pipeline_layout);
-
-        let pipeline = unsafe {
-            device.create_graphics_pipelines(
-                vk::PipelineCache::null(),
-                std::slice::from_ref(&pipeline_info),
-                None,
-            )
-        }
-        .map_err(|e| {
-            crate::error::RendererError::PipelineError(format!(
-                "Failed to create graphics pipeline: {:?}",
-                e.1
-            ))
-        })?[0];
-
-        Ok(pipeline)
     }
 }
 

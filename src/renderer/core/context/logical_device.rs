@@ -1,5 +1,5 @@
 use ash::khr::surface;
-use ash::{vk, Device, Instance};
+use ash::{Device, Instance, vk};
 
 pub fn create_device(instance: &Instance, physical_device: vk::PhysicalDevice, surface: vk::SurfaceKHR, surface_loader: &surface::Instance) -> Result<(Device, vk::Queue, u32), vk::Result> {
     // Queue family
@@ -18,6 +18,8 @@ pub fn create_device(instance: &Instance, physical_device: vk::PhysicalDevice, s
     assert!(surface_support, "Surface does not support queue family");
 
     // Logical device
+    let mut vk_11_features = vk::PhysicalDeviceVulkan11Features::default()
+        .shader_draw_parameters(true);
     let mut vk_12_features = vk::PhysicalDeviceVulkan12Features::default()
         .buffer_device_address(true)
         .descriptor_indexing(true);
@@ -29,6 +31,7 @@ pub fn create_device(instance: &Instance, physical_device: vk::PhysicalDevice, s
 
     let mut features2 = vk::PhysicalDeviceFeatures2::default()
         .features(vk_10_features)
+        .push_next(&mut vk_11_features)
         .push_next(&mut vk_12_features)
         .push_next(&mut vk_13_features);
 
