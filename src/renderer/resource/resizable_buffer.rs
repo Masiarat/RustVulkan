@@ -37,6 +37,7 @@ impl ResizableBuffer {
         };
         let new_buffer = Buffer::new(context, new_size, self.usage_flags, &self.name, self.location)?;
         self.buffer = new_buffer;
+        self.capacity = new_size;
         Ok( () )
     }
     pub fn copy_from_slice(&mut self, p0: &[u8]) -> Result<(), String> {

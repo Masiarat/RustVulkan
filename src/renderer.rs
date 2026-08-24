@@ -107,14 +107,14 @@ impl Renderer {
         let device = &self.context.device;
         let present_queue = self.context.present_queue;
 
+
+        unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
+        self.egui_painter.cleanup(frame_index)?;
         self.egui_painter.update_textures(
             &self.immediate_submitter,
             textures_delta,
             frame_index,
         )?;
-
-        unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
-
         self.frames[frame_index].with_destroy_queue(|q| q.flush(&self.context))??;
         unsafe { device.reset_fences(&[render_fence])? };
 

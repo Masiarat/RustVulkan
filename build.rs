@@ -36,7 +36,7 @@ fn main() {
             let output = Command::new("slangc")
                 .args(&[
                     path.to_str().unwrap(),
-                    "-target", "spirv", // Target Vulkan SPIR-V
+                    "-target", "spirv", "-fvk-use-scalar-layout", // Target Vulkan SPIR-V
                     "-o", dest_path.to_str().unwrap(),
                 ])
                 .output()

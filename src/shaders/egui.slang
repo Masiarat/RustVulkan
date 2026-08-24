@@ -50,7 +50,7 @@ VertexOutput vertex(uint vertexId : SV_VertexID) {
     float g = float((v.color_packed >> 8) & 0xFF) / 255.0;
     float b = float((v.color_packed >> 16) & 0xFF) / 255.0;
     float a = float((v.color_packed >> 24) & 0xFF) / 255.0;
-    
+
     output.color = float4(r, g, b, a);
     output.uv = v.uv;
 
@@ -64,15 +64,15 @@ VertexOutput vertex(uint vertexId : SV_VertexID) {
 float4 fragment(VertexOutput input) : SV_Target {
     // Sample the texture
     float4 tex_color = s_texture.Sample(input.uv);
-    
+
     // For egui's premultiplied alpha:
     // - input.color is already in sRGB (from vertex)
     // - We multiply texture by vertex color
     // - The color must be premultiplied for correct blending
     float4 result = input.color * tex_color;
-    
+
     // Ensure alpha is properly set
     result.a = input.color.a * tex_color.a;
-    
+
     return result;
 }

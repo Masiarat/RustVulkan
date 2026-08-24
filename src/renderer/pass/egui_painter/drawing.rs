@@ -111,16 +111,10 @@ impl DrawContext {
             ];
             let device_address_info = vk::BufferDeviceAddressInfo::default().buffer(self.vertex_buffer.buffer());
             let vertex_address = device.get_buffer_device_address(&device_address_info);
-            let pc = EguiPushConstants {screen_size: screen_size_points, vertex_buffer: vertex_address };
-            let pc_data = bytemuck::bytes_of(&pc);
+            // let pc = EguiPushConstants {screen_size: screen_size_points, vertex_buffer: vertex_address };
+            // let pc_data = bytemuck::bytes_of(&pc);
 
-            device.cmd_push_constants(
-                cmd,
-                pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
-                0,
-                pc_data,
-            );
+
 
             let viewport = vk::Viewport {
                 x: 0.0,
@@ -159,6 +153,21 @@ impl DrawContext {
                         continue;
                     }
 
+                    let current_mesh_address = vertex_address + (vertex_offset as u64 * 20);
+
+                    let pc = EguiPushConstants {
+                        screen_size: screen_size_points,
+                        vertex_buffer: current_mesh_address
+                    };
+                    let pc_data = bytemuck::bytes_of(&pc);
+                    device.cmd_push_constants(
+                        cmd,
+                        pipeline_layout,
+                        vk::ShaderStageFlags::VERTEX,
+                        0,
+                        pc_data,
+                    );
+
                     let scissor = vk::Rect2D {
                         offset: vk::Offset2D {
                             x: clip_min_x.round() as i32,
@@ -186,7 +195,7 @@ impl DrawContext {
                             mesh.indices.len() as u32,
                             1,
                             index_offset,
-                            vertex_offset,
+                            0,
                             0,
                         );
                     }
