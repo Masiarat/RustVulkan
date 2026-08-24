@@ -25,7 +25,6 @@ impl Buffer {
         usage: vk::BufferUsageFlags,
         name: &str,
         location: MemoryLocation,
-        trash_tx: Sender<ResourceGarbage>
     ) -> Result<Buffer, Box<dyn Error>> {
         let buffer_ci = standard_buffer_create_info(size, usage);
         let device = &context.device;
@@ -37,7 +36,7 @@ impl Buffer {
         Ok(Buffer {
             buffer,
             allocation: Some(allocation),
-            trash_tx
+            trash_tx: context.trash_tx.clone()
         })
     }
 

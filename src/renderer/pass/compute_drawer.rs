@@ -25,7 +25,7 @@ impl ComputeDrawer {
         image_extent: vk::Extent2D,
         allocator: &mut DescAllocator,
     ) -> RendererResult<Self> {
-        let draw_image = DrawImage::new(context.clone(), image_extent, allocator)?;
+        let draw_image = DrawImage::new(&context, image_extent, allocator)?;
 
         let compute_draw_shader = unsafe {
             load_shader_module(
@@ -67,7 +67,8 @@ impl ComputeDrawer {
                 std::slice::from_ref(&compute_pipeline_info),
                 None,
             )
-        }.map_err(|e| {
+        }
+        .map_err(|e| {
             // ash returns (Vec<Pipeline>, vk::Result) on error, so we access e.1
             crate::error::RendererError::PipelineError(format!(
                 "Failed to create compute pipeline: {:?}",
@@ -113,6 +114,7 @@ impl ComputeDrawer {
             cmb,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::GENERAL,
+            &self.context,
         );
 
         let mut push_constants = ComputePushConstants::default();
@@ -138,7 +140,13 @@ impl ComputeDrawer {
                 mem::size_of::<ComputePushConstants>(),
             );
 
-            device.cmd_push_constants(cmb, self.gradient_pipeline_layout, vk::ShaderStageFlags::COMPUTE, 0, pc_data);
+            device.cmd_push_constants(
+                cmb,
+                self.gradient_pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                pc_data,
+            );
 
             device.cmd_dispatch(
                 cmb,
@@ -152,6 +160,7 @@ impl ComputeDrawer {
             cmb,
             vk::ImageLayout::GENERAL,
             vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            &self.context,
         );
 
         current_swap_chain_image.transition_layout(
@@ -161,15 +170,18 @@ impl ComputeDrawer {
             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         );
 
-        self.draw_image
-            .image
-            .copy_to(cmb, current_swap_chain_image.image, image_extent);
+        self.draw_image.image.copy_to(
+            cmb,
+            current_swap_chain_image.image,
+            image_extent,
+            &self.context,
+        );
     }
 
     pub fn gradient_color_top_rgb(&mut self) -> &mut [f32; 3] {
         self.gradient_color_top.get_mut().as_rgb()
     }
-    
+
     pub fn gradient_color_bottom_rgb(&mut self) -> &mut [f32; 3] {
         self.gradient_color_bottom.get_mut().as_rgb()
     }

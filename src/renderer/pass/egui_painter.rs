@@ -1,4 +1,5 @@
 use crate::error::RendererResult;
+use crate::renderer::FRAME_COUNT;
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
 use crate::renderer::pass::egui_painter::texture_manager::{EguiTexture, TextureManager};
@@ -13,21 +14,18 @@ pub mod pipeline;
 pub mod texture_manager;
 
 pub struct EguiPainter {
-    draw_context: DrawContext,
+    // draw_context: DrawContext,
     pipeline: EguiPipeline,
     texture_manager: TextureManager,
     context: Arc<SharedContext>,
+    draw_contexts: Vec<DrawContext>,
 }
 
 const DESCRIPTOR_MAX_SETS: u32 = 100;
 
 impl EguiPainter {
-    pub fn new(
-        context: Arc<SharedContext>,
-        swapchain_format: vk::Format,
-    ) -> RendererResult<Self> {
+    pub fn new(context: Arc<SharedContext>, swapchain_format: vk::Format) -> RendererResult<Self> {
         let pipeline = EguiPipeline::new(context.clone(), swapchain_format)?;
-        let draw_context = DrawContext::new(context.clone())?;
         let descriptor_allocator = DescAllocator::new(
             context.clone(),
             DESCRIPTOR_MAX_SETS,
@@ -38,17 +36,19 @@ impl EguiPainter {
             vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
         )?;
         let texture_manager = TextureManager::new(
-            context.clone(),
             descriptor_allocator,
-            pipeline.sampler,
+            pipeline.sampler.sampler,
             pipeline.descriptor_set_layout,
         );
+        let draw_contexts = (0..FRAME_COUNT)
+            .map(|_| DrawContext::new(&context))
+            .collect::<RendererResult<_>>()?;
 
         Ok(Self {
-            draw_context,
             pipeline,
             texture_manager,
             context,
+            draw_contexts,
         })
     }
 
@@ -58,13 +58,18 @@ impl EguiPainter {
         textures_delta: &egui::TexturesDelta,
         frame_index: usize,
     ) -> RendererResult<()> {
-        self.texture_manager.update(immediate_submitter, textures_delta, frame_index)  
+        self.texture_manager.update(
+            &self.context,
+            immediate_submitter,
+            textures_delta,
+            frame_index,
+        )
     }
 
     pub fn cleanup(&mut self, frame_index: usize) -> RendererResult<()> {
         self.texture_manager.flush_descriptor_sets(frame_index)
     }
-    
+
     /// Number of GPU-side textures currently tracked by the `TextureManager`.
     pub fn texture_count(&self) -> usize {
         self.texture_manager.count()
@@ -73,20 +78,30 @@ impl EguiPainter {
     pub fn paint(
         &mut self,
         cmd: vk::CommandBuffer,
+        frame_index: usize,
         primitives: &[egui::ClippedPrimitive],
         screen_size_physical: [u32; 2],
         pixels_per_point: f32,
     ) -> RendererResult<()> {
-        self.draw_context.update_buffers(primitives)?;
+        let draw_context = &mut self.draw_contexts[frame_index];
+        draw_context.update_buffers(&self.context, primitives)?;
 
         let texture_sets: std::collections::HashMap<_, _> = self
             .texture_manager
             .textures
             .iter()
-            .filter_map(|(id, EguiTexture { texture: _, descriptor_set })| Some((*id, *descriptor_set)))
+            .filter_map(
+                |(
+                    id,
+                    EguiTexture {
+                        texture: _,
+                        descriptor_set,
+                    },
+                )| Some((*id, *descriptor_set)),
+            )
             .collect();
 
-        self.draw_context.paint(
+        draw_context.paint(
             cmd,
             &self.context.device,
             primitives,

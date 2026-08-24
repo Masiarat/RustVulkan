@@ -80,7 +80,6 @@ impl Image {
         name: &str,
         format: Format,
         usage: ImageUsageFlags,
-        trash_tx: mpsc::Sender<ResourceGarbage>
     ) -> Result<Result<Image, Box<dyn Error>>, Box<dyn Error>> {
         let extent3d = vk::Extent3D::from(extent);
         let image_create_info = util::standard_image_create_info(format, usage, extent3d);
@@ -94,13 +93,13 @@ impl Image {
         let image_view_create_info =
             util::standard_image_view_create_info(format, image, vk::ImageAspectFlags::COLOR);
         let image_view = unsafe { device.create_image_view(&image_view_create_info, None)? };
-
+        
         Ok(Ok(Image {
             image,
             image_view,
             allocation: Some(allocation),
             extent,
-            trash_tx
+            trash_tx: context.trash_tx.clone()
         }))
     }
 
@@ -108,7 +107,6 @@ impl Image {
         context: &SharedContext,
         extent: vk::Extent2D,
         name: &str,
-        trash_tx: mpsc::Sender<ResourceGarbage>
     ) -> Result<Image, Box<dyn Error>> {
         let format = vk::Format::R16G16B16A16_SFLOAT;
         let usage = vk::ImageUsageFlags::TRANSFER_SRC
@@ -116,21 +114,20 @@ impl Image {
             | vk::ImageUsageFlags::STORAGE
             | vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
-        Self::new(context, extent, name, format, usage, trash_tx)?
+        Self::new(context, extent, name, format, usage)?
     }
 
     pub fn new_texture(
         context: &SharedContext,
         extent: vk::Extent2D,
         name: &str,
-        trash_tx: mpsc::Sender<ResourceGarbage>
     ) -> Result<Image, Box<dyn Error>> {
         let format = vk::Format::R8G8B8A8_UNORM;
         let usage = vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::SAMPLED;
 
-        Self::new(context, extent, name, format, usage, trash_tx)?
+        Self::new(context, extent, name, format, usage)?
     }
 
     fn allocate(

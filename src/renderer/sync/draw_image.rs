@@ -1,11 +1,9 @@
 use crate::error::{RendererError, RendererResult};
 use crate::renderer::core::context::SharedContext;
-use crate::renderer::core::destroy_queue::ResourceGarbage;
 use crate::renderer::resource::descriptor;
 use crate::renderer::resource::descriptor::DescAllocator;
 use crate::renderer::resource::image::Image;
 use ash::vk;
-use std::sync::mpsc;
 
 pub struct DrawImage {
     pub(crate) descr_set: vk::DescriptorSet,
@@ -14,12 +12,11 @@ pub struct DrawImage {
 }
 
 impl DrawImage {
-    pub fn new(context: &SharedContext, extent: vk::Extent2D, allocator: &mut DescAllocator, trash_tx: mpsc::Sender<ResourceGarbage>) -> RendererResult<Self>{
+    pub fn new(context: &SharedContext, extent: vk::Extent2D, allocator: &mut DescAllocator) -> RendererResult<Self>{
         let draw_image = Image::new_display(
             context,
             extent,
             "draw_image",
-            trash_tx
         ).map_err(|e| RendererError::ImageAllocationError(e.to_string()))?;
 
         let mut builder = descriptor::LayoutBuilder::new();

@@ -7,17 +7,22 @@ mod selection;
 
 use crate::error::{RendererError, RendererResult};
 use crate::renderer::core::context::allocator::GpuAllocator;
-use crate::renderer::core::destroy_queue;
+use crate::renderer::core::destroy_queue::ResourceGarbage;
+use crate::renderer::sync::frame::Frame;
 use ash::khr::surface;
 use ash::{Device, Entry, Instance, vk};
 use debug_messenger::DebugMessenger;
 use std::ops::DerefMut;
-use std::sync::Mutex;
+use std::sync::{Mutex, mpsc};
+use std::time::Duration;
 use winit::window::Window;
 
 const DEFAULT_PHYSICAL_DEVICE: usize = 0;
 
 pub(crate) struct SharedContext {
+    pub trash_tx: mpsc::Sender<ResourceGarbage>,
+    pub trash_rx: mpsc::Receiver<ResourceGarbage>,
+    allocator: Mutex<GpuAllocator>,
     entry: Entry,
     pub(crate) instance: Instance,
     debug: DebugMessenger,
@@ -27,7 +32,7 @@ pub(crate) struct SharedContext {
     pub(crate) present_queue: vk::Queue,
     pub(crate) present_queue_family: u32,
     pub(crate) device: Device,
-    allocator: Mutex<GpuAllocator>, }
+}
 
 impl SharedContext {
     pub fn new(window: &Window) -> SharedContext {
@@ -54,7 +59,7 @@ impl SharedContext {
             GpuAllocator::new(instance.clone(), device.clone(), physical_device.clone())
                 .expect("Failed to create allocator");
 
-        let destroy_queue = destroy_queue::DestroyQueue::new();
+        let (trash_tx, trash_rx) = mpsc::channel();
 
         SharedContext {
             entry,
@@ -67,6 +72,8 @@ impl SharedContext {
             present_queue,
             present_queue_family,
             allocator: Mutex::new(allocator),
+            trash_tx,
+            trash_rx,
         }
     }
 
@@ -75,6 +82,22 @@ impl SharedContext {
             RendererError::GpuAllocatorMessage("Allocator mutex poisoned".to_string())
         })?;
         Ok(f(&mut allocator))
+    }
+
+    pub fn collect_garbage(&self, frame: &mut Frame) -> RendererResult<()> {
+        self.trash_rx
+            .try_iter()
+            .map(|garbage| {
+                frame.with_destroy_queue(|q| q.push(garbage))
+            })
+            .collect()
+    }
+    
+    pub fn collect_garbage_timeout(&self, frame: &mut Frame, timeout: Duration) -> RendererResult<()> {
+        while let Ok(garbage) = self.trash_rx.recv_timeout(timeout) {
+            frame.with_destroy_queue(|q| q.push(garbage))?;
+        }
+        Ok(())
     }
 }
 

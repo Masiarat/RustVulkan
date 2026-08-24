@@ -6,7 +6,6 @@ use crate::renderer::resource::descriptor::DescAllocator;
 use crate::renderer::resource::image::Image;
 use ash::vk;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 pub struct TextureManager {
     pub textures: HashMap<egui::TextureId, EguiTexture>,
@@ -14,12 +13,10 @@ pub struct TextureManager {
     descriptor_set_layout: vk::DescriptorSetLayout,
     pub descriptor_allocator: DescAllocator,
     texture_free_queue: [Vec<EguiTexture>; crate::renderer::FRAME_COUNT],
-    context: Arc<SharedContext>,
 }
 
 impl TextureManager {
     pub fn new(
-        context: Arc<SharedContext>,
         descriptor_allocator: DescAllocator,
         sampler: vk::Sampler,
         descriptor_set_layout: vk::DescriptorSetLayout,
@@ -30,18 +27,18 @@ impl TextureManager {
             descriptor_set_layout,
             descriptor_allocator,
             texture_free_queue: Default::default(),
-            context,
         }
     }
 
     pub fn update(
         &mut self,
+        context: &SharedContext,
         immediate_submitter: &ImmediateSubmitter,
         textures_delta: &egui::TexturesDelta,
         frame_index: usize
     ) -> RendererResult<()> {
 
-        let device = &self.context.device;
+        let device = &context.device;
 
         for texture_id in &textures_delta.free {
             if let Some(egui_texture) = self.textures.remove(texture_id) {
@@ -63,7 +60,7 @@ impl TextureManager {
             };
 
             let mut staging_buffer = Buffer::new(
-                self.context.clone(),
+                context,
                 pixels.len() as u64,
                 vk::BufferUsageFlags::TRANSFER_SRC,
                 &format!("egui_staging_buffer_{:?}", texture_id),
@@ -80,7 +77,7 @@ impl TextureManager {
 
             if is_new_texture {
                 let texture = Image::new_texture(
-                    self.context.clone(),
+                    context,
                     extent,
                     &format!("egui_texture_{:?}", texture_id),
                 )
@@ -117,7 +114,7 @@ impl TextureManager {
                 } else {
                     vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
                 };
-                texture.transition_layout(cmd, old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+                texture.transition_layout(cmd, old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL, context);
 
                 let (offset_x, offset_y) = match image_delta[0].pos {
                     Some([x, y]) => (x as i32, y as i32),
@@ -156,6 +153,7 @@ impl TextureManager {
                     cmd,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    context
                 );
             })?;
         }
@@ -172,14 +170,6 @@ impl TextureManager {
 
     pub fn count(&self) -> usize {
         self.textures.len()
-    }
-}
-
-impl Drop for TextureManager {
-    fn drop(&mut self) {
-        unsafe {
-            self.context.device.destroy_sampler(self.sampler, None);
-        }
     }
 }
 

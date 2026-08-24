@@ -17,7 +17,7 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn new(context: Arc<SharedContext>) -> Result<Frame, vk::Result>{
+    pub fn new(context: Arc<SharedContext>) -> RendererResult<Frame>{
         let device = &context.device;
 
         let command_pool_create_info = util::standard_command_pool_create_info(context.present_queue_family);
@@ -46,11 +46,21 @@ impl Drop for Frame {
     fn drop(&mut self) {
         unsafe {
             let device = &self.context.device;
+
             device.device_wait_idle().expect("Idle device failed!");
             device.destroy_command_pool(self.command_pool, None);
 
             device.destroy_fence(self.render_fence, None);
             device.destroy_semaphore(self.swap_chain_semaphore, None);
+
+            let context = &self.context.clone();
+            if let Err(e) = context.collect_garbage(self){
+                eprintln!("Failed to collect garbage: {:?}", e);
+            }
+
+            if let Err(e) = self.destroy_queue.flush(context){
+                eprintln!("Failed to flush destroy queue: {:?}", e);
+            }
         };
     }
 }

@@ -1,5 +1,4 @@
 use crate::error::{RendererError, RendererResult};
-use crate::renderer::core::destroy_queue::ResourceGarbage;
 use crate::renderer::pass::compute_drawer::ComputeDrawer;
 use ash::vk;
 use core::context::SharedContext;
@@ -10,7 +9,7 @@ use core::util::{
 use pass::egui_painter::EguiPainter;
 use resource::descriptor;
 use resource::descriptor::PoolSizeRatio;
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use sync::frame::Frame;
 use sync::swap_chain::SwapChain;
@@ -27,8 +26,6 @@ pub mod sync;
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
 pub struct Renderer {
-    trash_tx: mpsc::Sender<ResourceGarbage>,
-    trash_rx: mpsc::Receiver<ResourceGarbage>,
     pub compute_drawer: ComputeDrawer,
     pub egui_painter: EguiPainter,
     descriptor_allocator: Mutex<descriptor::DescAllocator>,
@@ -78,8 +75,6 @@ impl Renderer {
             &mut descr_alloc,
         )?;
 
-        let (trash_tx, trash_rx) = mpsc::channel();
-
         Ok(Renderer {
             compute_drawer,
             context,
@@ -88,8 +83,6 @@ impl Renderer {
             descriptor_allocator: Mutex::new(descr_alloc),
             immediate_submitter,
             egui_painter,
-            trash_tx,
-            trash_rx,
         })
     }
 
@@ -114,14 +107,15 @@ impl Renderer {
         let device = &self.context.device;
         let present_queue = self.context.present_queue;
 
-        unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
-
-        self.egui_painter.cleanup(frame_index)?;
         self.egui_painter.update_textures(
             &self.immediate_submitter,
             textures_delta,
             frame_index,
         )?;
+
+        unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
+
+        self.frames[frame_index].with_destroy_queue(|q| q.flush(&self.context))??;
         unsafe { device.reset_fences(&[render_fence])? };
 
         let (swap_chain_image_index, _) = unsafe {
@@ -141,7 +135,8 @@ impl Renderer {
             standard_command_buffer_begin_info(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe { device.begin_command_buffer(cmb, &command_buffer_begin_info)? }
 
-        self.compute_drawer.draw(cmb, &current_swap_chain_image, self.swap_chain.image_extent);
+        self.compute_drawer
+            .draw(cmb, &current_swap_chain_image, self.swap_chain.image_extent);
 
         current_swap_chain_image.transition_layout(
             &self.context,
@@ -166,8 +161,13 @@ impl Renderer {
 
         unsafe { device.cmd_begin_rendering(cmb, &rendering_info) };
 
-        self.egui_painter
-            .paint(cmb, primitives, screen_size, pixels_per_point)?;
+        self.egui_painter.paint(
+            cmb,
+            frame_index,
+            primitives,
+            screen_size,
+            pixels_per_point,
+        )?;
 
         unsafe { device.cmd_end_rendering(cmb) };
 
@@ -209,6 +209,8 @@ impl Renderer {
                 .swapchain_loader
                 .queue_present(present_queue, &present_info)?
         };
+        self.context
+            .collect_garbage(&mut self.frames[frame_index])?;
         Ok(())
     }
 }

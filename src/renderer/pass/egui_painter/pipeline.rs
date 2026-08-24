@@ -1,7 +1,7 @@
 use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
-use crate::renderer::core::util::standard_sampler_create_info;
 use crate::renderer::pipeline::{PipelineBuilder, load_shader_module};
+use crate::renderer::resource::sampler::Sampler;
 use ash::vk;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 pub struct EguiPipeline {
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
-    pub sampler: vk::Sampler,
+    pub sampler: Sampler,
     pub descriptor_set_layout: vk::DescriptorSetLayout,
     context: Arc<SharedContext>,
 }
@@ -35,8 +35,7 @@ impl EguiPipeline {
         let descriptor_set_layout =
             unsafe { device.create_descriptor_set_layout(&layout_info, None)? };
 
-        let sampler_info = standard_sampler_create_info();
-        let sampler = unsafe { device.create_sampler(&sampler_info, None)? };
+        let sampler = Sampler::new(&context)?;
 
         let push_constant_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX)

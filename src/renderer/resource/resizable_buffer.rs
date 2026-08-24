@@ -23,11 +23,10 @@ impl ResizableBuffer {
         usage: vk::BufferUsageFlags,
         name: &str,
         location: MemoryLocation,
-        trash_tx: mpsc::Sender<ResourceGarbage>
     ) -> Result<ResizableBuffer, Box<dyn Error>> {
         let name = name.to_string();
-        let buffer = Buffer::new(context, size, usage, &name, location, trash_tx.clone())?;
-        Ok( ResizableBuffer {buffer, capacity: size, usage_flags: usage, name, location, trash_tx } )
+        let buffer = Buffer::new(context, size, usage, &name, location)?;
+        Ok( ResizableBuffer {buffer, capacity: size, usage_flags: usage, name, location, trash_tx: context.trash_tx.clone() } )
     }
 
     pub fn resize(&mut self, size: vk::DeviceSize, context: &SharedContext) -> Result<(), Box<dyn Error>>{
@@ -36,7 +35,7 @@ impl ResizableBuffer {
         while new_size < size {
             new_size *= 2;
         };
-        let new_buffer = Buffer::new(context, new_size, self.usage_flags, &self.name, self.location, self.trash_tx.clone())?;
+        let new_buffer = Buffer::new(context, new_size, self.usage_flags, &self.name, self.location)?;
         self.buffer = new_buffer;
         Ok( () )
     }

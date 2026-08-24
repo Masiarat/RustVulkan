@@ -1,8 +1,8 @@
 use crate::error::RendererResult;
+use crate::renderer::core::context::SharedContext;
 use crate::renderer::pass::egui_painter::pipeline::EguiPushConstants;
 use crate::renderer::resource::resizable_buffer::ResizableBuffer;
 use ash::vk;
-use std::sync::Arc;
 
 pub struct DrawContext {
     pub vertex_buffer: ResizableBuffer,
@@ -10,9 +10,9 @@ pub struct DrawContext {
 }
 
 impl DrawContext {
-    pub fn new(context: Arc<crate::renderer::core::context::SharedContext>) -> RendererResult<Self> {
+    pub fn new(context: &SharedContext) -> RendererResult<Self> {
         let vertex_buffer = ResizableBuffer::new(
-            context.clone(),
+            context,
             2,
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
             "egui_vertex_buffer",
@@ -34,7 +34,8 @@ impl DrawContext {
 
     pub fn update_buffers(
         &mut self,
-        primitives: &[egui::ClippedPrimitive],
+        context: &SharedContext,
+        primitives: &[egui::ClippedPrimitive]
     ) -> RendererResult<()> {
         let mut total_vertices = 0;
         let mut total_indices = 0;
@@ -75,9 +76,9 @@ impl DrawContext {
             )
         };
 
-        self.vertex_buffer.resize(vertex_size)
+        self.vertex_buffer.resize(vertex_size, context)
             .map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
-        self.index_buffer.resize(index_size)
+        self.index_buffer.resize(index_size, context)
             .map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
         self.vertex_buffer.copy_from_slice(vertices_bytes)
             .map_err(|e| crate::error::RendererError::BufferAllocationError(e))?;
