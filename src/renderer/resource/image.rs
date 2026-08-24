@@ -1,13 +1,16 @@
 use crate::error::RendererResult;
-use crate::renderer::core::context::destroy_queue::Destroyable;
 use crate::renderer::core::context::SharedContext;
+use crate::renderer::core::destroy_queue::ResourceGarbage;
 use crate::renderer::core::util;
 use ash::vk::{CommandBuffer, Extent2D, Format, ImageUsageFlags};
-use ash::{vk, Device};
-use gpu_allocator::vulkan::{Allocation, AllocationScheme};
+use ash::{Device, vk};
 use gpu_allocator::MemoryLocation;
+use gpu_allocator::vulkan::{Allocation, AllocationScheme};
+use slotmap::new_key_type;
 use std::error::Error;
-use std::sync::Arc;
+use std::sync::mpsc;
+
+new_key_type! { pub struct ImageKey; }
 
 pub struct Image {
     pub image: vk::Image,
@@ -15,7 +18,7 @@ pub struct Image {
     allocation: Option<Allocation>,
     extent: vk::Extent2D,
 
-    context: Arc<SharedContext>,
+    trash_tx: mpsc::Sender<ResourceGarbage>
 }
 
 impl Image {
@@ -24,9 +27,10 @@ impl Image {
         command_buffer: CommandBuffer,
         other: vk::Image,
         other_extent: vk::Extent2D,
+        context: &SharedContext
     ) {
         cpy_image_to_image(
-            &self.context.device,
+            &context.device,
             command_buffer,
             self.image,
             other,
@@ -40,9 +44,10 @@ impl Image {
         command_buffer: CommandBuffer,
         current_layout: vk::ImageLayout,
         new_layout: vk::ImageLayout,
+        context: &SharedContext
     ) {
         transition_image(
-            &self.context,
+            context,
             command_buffer,
             self.image,
             current_layout,
@@ -50,7 +55,7 @@ impl Image {
         )
     }
 
-    pub fn clear_color(&self, command_buffer: CommandBuffer, color: vk::ClearColorValue) {
+    pub fn clear_color(&self, command_buffer: CommandBuffer, color: vk::ClearColorValue, context: &SharedContext) {
         let clear_range = vk::ImageSubresourceRange::default()
             .base_mip_level(0)
             .level_count(vk::REMAINING_MIP_LEVELS)
@@ -59,7 +64,7 @@ impl Image {
             .aspect_mask(vk::ImageAspectFlags::COLOR);
 
         unsafe {
-            self.context.device.cmd_clear_color_image(
+            context.device.cmd_clear_color_image(
                 command_buffer,
                 self.image,
                 vk::ImageLayout::GENERAL,
@@ -70,11 +75,12 @@ impl Image {
     }
 
     fn new(
-        context: Arc<SharedContext>,
+        context: &SharedContext,
         extent: Extent2D,
         name: &str,
         format: Format,
         usage: ImageUsageFlags,
+        trash_tx: mpsc::Sender<ResourceGarbage>
     ) -> Result<Result<Image, Box<dyn Error>>, Box<dyn Error>> {
         let extent3d = vk::Extent3D::from(extent);
         let image_create_info = util::standard_image_create_info(format, usage, extent3d);
@@ -94,14 +100,15 @@ impl Image {
             image_view,
             allocation: Some(allocation),
             extent,
-            context,
+            trash_tx
         }))
     }
 
     pub fn new_display(
-        context: Arc<SharedContext>,
+        context: &SharedContext,
         extent: vk::Extent2D,
         name: &str,
+        trash_tx: mpsc::Sender<ResourceGarbage>
     ) -> Result<Image, Box<dyn Error>> {
         let format = vk::Format::R16G16B16A16_SFLOAT;
         let usage = vk::ImageUsageFlags::TRANSFER_SRC
@@ -109,20 +116,21 @@ impl Image {
             | vk::ImageUsageFlags::STORAGE
             | vk::ImageUsageFlags::COLOR_ATTACHMENT;
 
-        Self::new(context, extent, name, format, usage)?
+        Self::new(context, extent, name, format, usage, trash_tx)?
     }
 
     pub fn new_texture(
-        context: Arc<SharedContext>,
+        context: &SharedContext,
         extent: vk::Extent2D,
         name: &str,
+        trash_tx: mpsc::Sender<ResourceGarbage>
     ) -> Result<Image, Box<dyn Error>> {
         let format = vk::Format::R8G8B8A8_UNORM;
         let usage = vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::TRANSFER_DST
             | vk::ImageUsageFlags::SAMPLED;
 
-        Self::new(context, extent, name, format, usage)?
+        Self::new(context, extent, name, format, usage, trash_tx)?
     }
 
     fn allocate(
@@ -148,7 +156,7 @@ impl Drop for Image {
     fn drop(&mut self) {
         if let Some(allocation) = self.allocation.take() {
             let retired = RetiredImage { image: self.image, image_view: self.image_view, allocation };
-            if let Err(e) = self.context.with_destroy_queue(|queue| queue.push(Box::new(retired))){
+            if let Err(e) = self.trash_tx.send(ResourceGarbage::Image(retired)){
                 println!("Failed to queue image for destruction: {}", e);
             }
         }
@@ -159,14 +167,14 @@ impl Drop for Image {
 }
 
 #[derive(Debug)]
-struct RetiredImage {
+pub struct RetiredImage {
     image: vk::Image,
     image_view: vk::ImageView,
     allocation: Allocation,
 }
 
-impl Destroyable for RetiredImage {
-    fn destroy(self: Box<RetiredImage>, context: &SharedContext) -> RendererResult<()> {
+impl RetiredImage {
+    pub fn destroy(self, context: &SharedContext) -> RendererResult<()> {
         let device = &context.device;
         unsafe{
             device.destroy_image_view(self.image_view, None);

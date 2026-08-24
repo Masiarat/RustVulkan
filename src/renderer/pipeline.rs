@@ -127,9 +127,15 @@ impl PipelineBuilder {
             .src_color_blend_factor(vk::BlendFactor::ONE)
             .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
             .color_blend_op(vk::BlendOp::ADD)
-            .src_alpha_blend_factor(vk::BlendFactor::ONE)
-            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-            .alpha_blend_op(vk::BlendOp::ADD);
+            .src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .color_write_mask(vk::ColorComponentFlags::RGBA);
+        self
+    }
+
+    pub fn disable_depth_clamping(mut self) -> Self {
+        self.rasterizer = self.rasterizer.depth_clamp_enable(false).depth_bias_enable(false);
         self
     }
 

@@ -1,4 +1,5 @@
 use crate::error::{RendererError, RendererResult};
+use crate::renderer::core::destroy_queue::ResourceGarbage;
 use crate::renderer::pass::compute_drawer::ComputeDrawer;
 use ash::vk;
 use core::context::SharedContext;
@@ -9,7 +10,7 @@ use core::util::{
 use pass::egui_painter::EguiPainter;
 use resource::descriptor;
 use resource::descriptor::PoolSizeRatio;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use sync::frame::Frame;
 use sync::swap_chain::SwapChain;
@@ -26,6 +27,8 @@ pub mod sync;
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
 pub struct Renderer {
+    trash_tx: mpsc::Sender<ResourceGarbage>,
+    trash_rx: mpsc::Receiver<ResourceGarbage>,
     pub compute_drawer: ComputeDrawer,
     pub egui_painter: EguiPainter,
     descriptor_allocator: Mutex<descriptor::DescAllocator>,
@@ -75,6 +78,8 @@ impl Renderer {
             &mut descr_alloc,
         )?;
 
+        let (trash_tx, trash_rx) = mpsc::channel();
+
         Ok(Renderer {
             compute_drawer,
             context,
@@ -83,6 +88,8 @@ impl Renderer {
             descriptor_allocator: Mutex::new(descr_alloc),
             immediate_submitter,
             egui_painter,
+            trash_tx,
+            trash_rx,
         })
     }
 
@@ -108,8 +115,7 @@ impl Renderer {
         let present_queue = self.context.present_queue;
 
         unsafe { device.wait_for_fences(&[render_fence], true, ONE_SECOND.as_nanos() as u64)? }
-        self.context
-            .with_destroy_queue(|q| q.flush(&self.context))??;
+
         self.egui_painter.cleanup(frame_index)?;
         self.egui_painter.update_textures(
             &self.immediate_submitter,

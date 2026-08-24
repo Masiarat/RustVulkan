@@ -57,10 +57,11 @@ impl EguiPipeline {
             .disable_depth_test()
             .input_topology(vk::PrimitiveTopology::TRIANGLE_LIST)
             .polygon_mode(vk::PolygonMode::FILL)
-            .cull_mode(vk::CullModeFlags::NONE, vk::FrontFace::COUNTER_CLOCKWISE)
+            .cull_mode(vk::CullModeFlags::NONE, vk::FrontFace::CLOCKWISE)
             .multisampling_none()
             .enable_blending_premultiplied_alpha()
             .shaders(egui_shader_module)
+            .disable_depth_clamping()
             .build(device)?;
 
         // let pipeline = PipelineBuilder::default()

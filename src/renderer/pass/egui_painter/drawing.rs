@@ -104,13 +104,13 @@ impl DrawContext {
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
 
-            // let screen_size_points = [
-            //     screen_size_physical[0] as f32 / pixels_per_point,
-            //     screen_size_physical[1] as f32 / pixels_per_point,
-            // ];
+            let screen_size_points = [
+                screen_size_physical[0] as f32 / pixels_per_point,
+                screen_size_physical[1] as f32 / pixels_per_point,
+            ];
             let device_address_info = vk::BufferDeviceAddressInfo::default().buffer(self.vertex_buffer.buffer());
             let vertex_address = device.get_buffer_device_address(&device_address_info);
-            let pc = EguiPushConstants {screen_size: screen_size_physical.map(|x| x as f32), vertex_buffer: vertex_address };
+            let pc = EguiPushConstants {screen_size: screen_size_points, vertex_buffer: vertex_address };
             let pc_data = bytemuck::bytes_of(&pc);
 
             device.cmd_push_constants(

@@ -4,12 +4,12 @@ mod debug_messenger;
 mod logical_device;
 mod presentation;
 mod selection;
-pub mod destroy_queue;
 
 use crate::error::{RendererError, RendererResult};
 use crate::renderer::core::context::allocator::GpuAllocator;
+use crate::renderer::core::destroy_queue;
 use ash::khr::surface;
-use ash::{vk, Device, Entry, Instance};
+use ash::{Device, Entry, Instance, vk};
 use debug_messenger::DebugMessenger;
 use std::ops::DerefMut;
 use std::sync::Mutex;
@@ -27,9 +27,7 @@ pub(crate) struct SharedContext {
     pub(crate) present_queue: vk::Queue,
     pub(crate) present_queue_family: u32,
     pub(crate) device: Device,
-    allocator: Mutex<GpuAllocator>,
-    destroy_queue: Mutex<destroy_queue::DestroyQueue>,
-}
+    allocator: Mutex<GpuAllocator>, }
 
 impl SharedContext {
     pub fn new(window: &Window) -> SharedContext {
@@ -69,15 +67,7 @@ impl SharedContext {
             present_queue,
             present_queue_family,
             allocator: Mutex::new(allocator),
-            destroy_queue: Mutex::new(destroy_queue),
         }
-    }
-
-    pub fn with_destroy_queue<R>(&self, f: impl FnOnce(&mut destroy_queue::DestroyQueue) -> R) -> RendererResult<R> {
-        let mut destroy_queue = self.destroy_queue.lock().map_err(|_e| {
-            RendererError::GpuAllocatorMessage("Destroy queue mutex poisoned".to_string())
-        })?;
-        Ok(f(&mut destroy_queue))
     }
 
     pub fn with_allocator<R>(&self, f: impl FnOnce(&mut GpuAllocator) -> R) -> RendererResult<R> {
@@ -91,9 +81,9 @@ impl SharedContext {
 impl Drop for SharedContext {
     fn drop(&mut self) {
         unsafe {
-            if let Err(e) = self.with_destroy_queue(|q| q.flush(self)) {
-                println!("Failed to flush destroy queue: {}", e);
-            }
+            // if let Err(e) = self.with_destroy_queue(|q| q.flush(self)) {
+            //     println!("Failed to flush destroy queue: {}", e);
+            // }
             println!("Destroying allocator");
             if let Ok(mut guard) = self.allocator.lock() {
                 if let Err(e) = guard.deref_mut().free() {

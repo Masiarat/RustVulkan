@@ -1,5 +1,7 @@
+use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
-use crate::renderer::core::util;
+use crate::renderer::core::destroy_queue::DestroyQueue;
+use crate::renderer::core::{destroy_queue, util};
 use ash::vk;
 use std::sync::Arc;
 
@@ -10,6 +12,7 @@ pub struct Frame {
     pub render_fence: vk::Fence,
     pub swap_chain_semaphore: vk::Semaphore,
 
+    destroy_queue: DestroyQueue,
     context: Arc<SharedContext>
 }
 
@@ -29,7 +32,13 @@ impl Frame {
         let semaphore_create_info = vk::SemaphoreCreateInfo::default();
         let swap_chain_semaphore = unsafe { device.create_semaphore(&semaphore_create_info, None)? };
 
-        Ok( Frame { command_pool, command_buffer, render_fence, swap_chain_semaphore, context } )
+        let destroy_queue = destroy_queue::DestroyQueue::new();
+
+        Ok( Frame { command_pool, command_buffer, render_fence, swap_chain_semaphore, destroy_queue, context } )
+    }
+
+    pub fn with_destroy_queue<R>(&mut self, f: impl FnOnce(&mut DestroyQueue) -> R) -> RendererResult<R> {
+        Ok(f(&mut self.destroy_queue))
     }
 }
 

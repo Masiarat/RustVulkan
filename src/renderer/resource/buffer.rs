@@ -1,27 +1,31 @@
 use crate::error::RendererResult;
-use crate::renderer::core::context::destroy_queue::Destroyable;
 use crate::renderer::core::context::SharedContext;
+use crate::renderer::core::destroy_queue::ResourceGarbage;
 use crate::renderer::core::util::standard_buffer_create_info;
 use ash::vk;
-use gpu_allocator::vulkan::Allocation;
 use gpu_allocator::MemoryLocation;
+use gpu_allocator::vulkan::Allocation;
+use slotmap::new_key_type;
 use std::error::Error;
-use std::sync::Arc;
+use std::sync::mpsc::Sender;
+
+new_key_type! { pub struct BufferKey; }
 
 pub struct Buffer {
     pub buffer: vk::Buffer,
     allocation: Option<Allocation>,
 
-    context: Arc<SharedContext>,
+    trash_tx: Sender<ResourceGarbage>
 }
 
 impl Buffer {
     pub fn new(
-        context: Arc<SharedContext>,
+        context: &SharedContext,
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
         name: &str,
         location: MemoryLocation,
+        trash_tx: Sender<ResourceGarbage>
     ) -> Result<Buffer, Box<dyn Error>> {
         let buffer_ci = standard_buffer_create_info(size, usage);
         let device = &context.device;
@@ -33,7 +37,7 @@ impl Buffer {
         Ok(Buffer {
             buffer,
             allocation: Some(allocation),
-            context,
+            trash_tx
         })
     }
 
@@ -87,26 +91,23 @@ impl Drop for Buffer {
     fn drop(&mut self) {
         if let Some(allocation) = self.allocation.take() {
             let retired = RetiredBuffer { buffer: self.buffer, allocation };
-            if let Err(e) = self
-                .context
-                .with_destroy_queue(|queue| queue.push(Box::new(retired)))
-            {
-                println!("Error queueing buffer cleanup {}", e);
+            if let Err(e) = self.trash_tx.send(ResourceGarbage::Buffer(retired)) {
+                eprintln!("Error queueing buffer cleanup: {}", e);
             }
         }else{
-            println!("Error queueing buffer cleanup, allocation is None");
+            eprintln!("Error queueing buffer cleanup, allocation is None");
         }
     }
 }
 
 #[derive(Debug)]
-struct RetiredBuffer {
+pub struct RetiredBuffer {
     buffer: vk::Buffer,
     allocation: Allocation,
 }
 
-impl Destroyable for RetiredBuffer {
-    fn destroy(self: Box<Self>, context: &SharedContext) -> RendererResult<()> {
+impl RetiredBuffer {
+    pub fn destroy(self: Self, context: &SharedContext) -> RendererResult<()> {
         unsafe{ context.device.destroy_buffer(self.buffer, None) }
         context.with_allocator(|allocator| allocator.free_allocation(self.allocation))?
     }
