@@ -5,12 +5,12 @@ use crate::renderer::pass::egui_painter::pipeline::EguiPushConstants;
 use crate::renderer::resource::resizable_buffer::ResizableBuffer;
 use ash::vk;
 
-pub struct DrawContext {
+pub struct UIDrawContext {
     pub vertex_buffer: ResizableBuffer,
     pub index_buffer: ResizableBuffer,
 }
 
-impl DrawContext {
+impl UIDrawContext {
     pub fn new(context: &SharedContext) -> RendererResult<Self> {
         let vertex_buffer = ResizableBuffer::new(
             context,

@@ -19,6 +19,9 @@ pub enum RendererError {
     #[error("Buffer allocation failed: {0}")]
     BufferAllocationError(String),
 
+    #[error("Buffer write failed: {0}")]
+    BufferWriteError(String),
+
     #[error("Image allocation failed: {0}")]
     ImageAllocationError(String),
 

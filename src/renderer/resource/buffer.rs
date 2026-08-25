@@ -1,4 +1,4 @@
-use crate::error::RendererResult;
+use crate::error::{RendererError, RendererResult};
 use crate::renderer::core::context::SharedContext;
 use crate::renderer::core::destroy_queue::ResourceGarbage;
 use crate::renderer::core::util::standard_buffer_create_info;
@@ -6,7 +6,6 @@ use ash::vk;
 use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan::Allocation;
 use slotmap::new_key_type;
-use std::error::Error;
 use std::sync::mpsc::Sender;
 
 new_key_type! { pub struct BufferKey; }
@@ -15,7 +14,7 @@ pub struct Buffer {
     pub buffer: vk::Buffer,
     allocation: Option<Allocation>,
 
-    trash_tx: Sender<ResourceGarbage>
+    trash_tx: Sender<ResourceGarbage>,
 }
 
 impl Buffer {
@@ -25,7 +24,7 @@ impl Buffer {
         usage: vk::BufferUsageFlags,
         name: &str,
         location: MemoryLocation,
-    ) -> Result<Buffer, Box<dyn Error>> {
+    ) -> RendererResult<Buffer> {
         let buffer_ci = standard_buffer_create_info(size, usage);
         let device = &context.device;
         let buffer = unsafe { device.create_buffer(&buffer_ci, None)? };
@@ -36,7 +35,7 @@ impl Buffer {
         Ok(Buffer {
             buffer,
             allocation: Some(allocation),
-            trash_tx: context.trash_tx.clone()
+            trash_tx: context.trash_tx.clone(),
         })
     }
 
@@ -59,6 +58,31 @@ impl Buffer {
         };
 
         context.with_allocator(|allocator| allocator.allocate(&allocation_desc))?
+    }
+
+    pub fn copy_from_slice_at(&mut self, data: &[u8], offset: usize) -> RendererResult<()> {
+        let Some(allocation) = &mut self.allocation else {
+            return Err(RendererError::BufferWriteError(
+                "Buffer allocation is none".to_string(),
+            ));
+        };
+        let Some(mapped_slice) = allocation.mapped_slice_mut() else {
+            return Err(RendererError::BufferWriteError(
+                "Buffer is not mapped".to_string(),
+            ));
+        };
+        if data.len() + offset > mapped_slice.len() {
+            return Err(RendererError::BufferWriteError(
+                format!(
+                    "Data length ({}) is greater than mapped slice length ({})",
+                    data.len(),
+                    mapped_slice.len()
+                ),
+            ))
+        }
+
+        mapped_slice[offset..offset + data.len()].copy_from_slice(data);
+        Ok(())
     }
 
     pub fn copy_from_slice(&mut self, data: &[u8]) -> Result<(), String> {
@@ -89,11 +113,14 @@ impl Buffer {
 impl Drop for Buffer {
     fn drop(&mut self) {
         if let Some(allocation) = self.allocation.take() {
-            let retired = RetiredBuffer { buffer: self.buffer, allocation };
+            let retired = RetiredBuffer {
+                buffer: self.buffer,
+                allocation,
+            };
             if let Err(e) = self.trash_tx.send(ResourceGarbage::Buffer(retired)) {
                 eprintln!("Error queueing buffer cleanup: {}", e);
             }
-        }else{
+        } else {
             eprintln!("Error queueing buffer cleanup, allocation is None");
         }
     }
@@ -107,7 +134,7 @@ pub struct RetiredBuffer {
 
 impl RetiredBuffer {
     pub fn destroy(self: Self, context: &SharedContext) -> RendererResult<()> {
-        unsafe{ context.device.destroy_buffer(self.buffer, None) }
+        unsafe { context.device.destroy_buffer(self.buffer, None) }
         context.with_allocator(|allocator| allocator.free_allocation(self.allocation))?
     }
 }

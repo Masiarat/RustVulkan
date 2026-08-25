@@ -24,6 +24,7 @@ pub mod pass;
 mod pipeline;
 pub mod resource;
 pub mod sync;
+mod mesh;
 
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
@@ -78,7 +79,7 @@ impl Renderer {
             &mut descr_alloc,
         )?;
 
-        let mesh_drawer = MeshDrawer::new(context.clone(), swap_chain.image_format)?;
+        let mesh_drawer = MeshDrawer::new(context.clone(), swap_chain.image_format, &immediate_submitter)?;
 
         Ok(Renderer {
             mesh_drawer,

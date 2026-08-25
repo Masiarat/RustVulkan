@@ -5,7 +5,7 @@ use crate::renderer::core::immediate_submitter::ImmediateSubmitter;
 use crate::renderer::pass::egui_painter::texture_manager::{EguiTexture, TextureManager};
 use crate::renderer::resource::descriptor::{DescAllocator, PoolSizeRatio};
 use ash::vk;
-use drawing::DrawContext;
+use drawing::UIDrawContext;
 use pipeline::EguiPipeline;
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ pub struct EguiPainter {
     pipeline: EguiPipeline,
     texture_manager: TextureManager,
     context: Arc<SharedContext>,
-    draw_contexts: Vec<DrawContext>,
+    draw_contexts: Vec<UIDrawContext>,
 }
 
 const DESCRIPTOR_MAX_SETS: u32 = 100;
@@ -41,7 +41,7 @@ impl EguiPainter {
             pipeline.descriptor_set_layout,
         );
         let draw_contexts = (0..FRAME_COUNT)
-            .map(|_| DrawContext::new(&context))
+            .map(|_| UIDrawContext::new(&context))
             .collect::<RendererResult<_>>()?;
 
         Ok(Self {
