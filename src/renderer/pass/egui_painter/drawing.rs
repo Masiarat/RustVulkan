@@ -1,5 +1,6 @@
 use crate::error::RendererResult;
 use crate::renderer::core::context::SharedContext;
+use crate::renderer::core::util::standard_viewport;
 use crate::renderer::pass::egui_painter::pipeline::EguiPushConstants;
 use crate::renderer::resource::resizable_buffer::ResizableBuffer;
 use ash::vk;
@@ -17,14 +18,16 @@ impl DrawContext {
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
             "egui_vertex_buffer",
             gpu_allocator::MemoryLocation::CpuToGpu,
-        ).map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
+        )
+        .map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
         let index_buffer = ResizableBuffer::new(
             context,
             2,
             vk::BufferUsageFlags::INDEX_BUFFER,
             "egui_index_buffer",
             gpu_allocator::MemoryLocation::CpuToGpu,
-        ).map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
+        )
+        .map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
 
         Ok(Self {
             vertex_buffer,
@@ -35,7 +38,7 @@ impl DrawContext {
     pub fn update_buffers(
         &mut self,
         context: &SharedContext,
-        primitives: &[egui::ClippedPrimitive]
+        primitives: &[egui::ClippedPrimitive],
     ) -> RendererResult<()> {
         let mut total_vertices = 0;
         let mut total_indices = 0;
@@ -76,13 +79,17 @@ impl DrawContext {
             )
         };
 
-        self.vertex_buffer.resize(vertex_size, context)
+        self.vertex_buffer
+            .resize(vertex_size, context)
             .map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
-        self.index_buffer.resize(index_size, context)
+        self.index_buffer
+            .resize(index_size, context)
             .map_err(|e| crate::error::RendererError::BufferAllocationError(e.to_string()))?;
-        self.vertex_buffer.copy_from_slice(vertices_bytes)
+        self.vertex_buffer
+            .copy_from_slice(vertices_bytes)
             .map_err(|e| crate::error::RendererError::BufferAllocationError(e))?;
-        self.index_buffer.copy_from_slice(indices_bytes)
+        self.index_buffer
+            .copy_from_slice(indices_bytes)
             .map_err(|e| crate::error::RendererError::BufferAllocationError(e))?;
 
         Ok(())
@@ -97,10 +104,7 @@ impl DrawContext {
         pixels_per_point: f32,
         pipeline: vk::Pipeline,
         pipeline_layout: vk::PipelineLayout,
-        texture_descriptor_sets: &std::collections::HashMap<
-            egui::TextureId,
-            vk::DescriptorSet,
-        >,
+        texture_descriptor_sets: &std::collections::HashMap<egui::TextureId, vk::DescriptorSet>,
     ) -> RendererResult<()> {
         unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
@@ -109,21 +113,14 @@ impl DrawContext {
                 screen_size_physical[0] as f32 / pixels_per_point,
                 screen_size_physical[1] as f32 / pixels_per_point,
             ];
-            let device_address_info = vk::BufferDeviceAddressInfo::default().buffer(self.vertex_buffer.buffer());
+            let device_address_info =
+                vk::BufferDeviceAddressInfo::default().buffer(self.vertex_buffer.buffer());
             let vertex_address = device.get_buffer_device_address(&device_address_info);
-            // let pc = EguiPushConstants {screen_size: screen_size_points, vertex_buffer: vertex_address };
-            // let pc_data = bytemuck::bytes_of(&pc);
 
-
-
-            let viewport = vk::Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: screen_size_physical[0] as f32,
-                height: screen_size_physical[1] as f32,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            };
+            let viewport = standard_viewport(vk::Extent2D {
+                width: screen_size_physical[0],
+                height: screen_size_physical[1],
+            });
             device.cmd_set_viewport(cmd, 0, &[viewport]);
 
             // device.cmd_bind_vertex_buffers(cmd, 0, &[self.vertex_buffer.buffer()], &[0]);
@@ -157,7 +154,7 @@ impl DrawContext {
 
                     let pc = EguiPushConstants {
                         screen_size: screen_size_points,
-                        vertex_buffer: current_mesh_address
+                        vertex_buffer: current_mesh_address,
                     };
                     let pc_data = bytemuck::bytes_of(&pc);
                     device.cmd_push_constants(

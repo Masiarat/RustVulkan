@@ -1,5 +1,7 @@
 use crate::error::{RendererError, RendererResult};
+use crate::renderer::core::util::{standard_rendering_attachment_info, standard_rendering_info};
 use crate::renderer::pass::compute_drawer::ComputeDrawer;
+use crate::renderer::pass::mesh_drawer::MeshDrawer;
 use ash::vk;
 use core::context::SharedContext;
 use core::immediate_submitter::ImmediateSubmitter;
@@ -26,6 +28,7 @@ pub mod sync;
 const ONE_SECOND: Duration = Duration::from_secs(1);
 
 pub struct Renderer {
+    pub mesh_drawer: MeshDrawer,
     pub compute_drawer: ComputeDrawer,
     pub egui_painter: EguiPainter,
     descriptor_allocator: Mutex<descriptor::DescAllocator>,
@@ -75,7 +78,10 @@ impl Renderer {
             &mut descr_alloc,
         )?;
 
+        let mesh_drawer = MeshDrawer::new(context.clone(), swap_chain.image_format)?;
+
         Ok(Renderer {
+            mesh_drawer,
             compute_drawer,
             context,
             swap_chain,
@@ -145,21 +151,12 @@ impl Renderer {
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         );
 
-        let color_attachment = vk::RenderingAttachmentInfo::default()
-            .image_view(current_swap_chain_image.image_view)
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .load_op(vk::AttachmentLoadOp::LOAD)
-            .store_op(vk::AttachmentStoreOp::STORE);
-
-        let rendering_info = vk::RenderingInfo::default()
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: self.swap_chain.image_extent,
-            })
-            .layer_count(1)
-            .color_attachments(std::slice::from_ref(&color_attachment));
+        let color_attachment = standard_rendering_attachment_info(current_swap_chain_image.image_view);
+        let rendering_info = standard_rendering_info(std::slice::from_ref(&color_attachment), self.swap_chain.image_extent);
 
         unsafe { device.cmd_begin_rendering(cmb, &rendering_info) };
+
+        self.mesh_drawer.draw_geometry(&self.context, cmb, vk::Extent2D { width: screen_size[0], height: screen_size[1] });
 
         self.egui_painter.paint(
             cmb,

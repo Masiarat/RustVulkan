@@ -1,7 +1,7 @@
 // STANDARD CREATE INFOS
 
 use ash::vk;
-use ash::vk::{CommandBufferBeginInfo, CommandBufferSubmitInfo, Offset3D, SemaphoreSubmitInfo};
+use ash::vk::{CommandBufferBeginInfo, CommandBufferSubmitInfo, Offset3D, RenderingAttachmentInfo, SemaphoreSubmitInfo};
 use std::ffi::CStr;
 
 pub fn to_offset_zero(src_extent: vk::Extent2D) -> [Offset3D; 2] {
@@ -9,6 +9,42 @@ pub fn to_offset_zero(src_extent: vk::Extent2D) -> [Offset3D; 2] {
         Offset3D::default().x(0).y(0).z(0),
         Offset3D::default().x(src_extent.width as i32).y(src_extent.height as i32).z(1),
     ]
+}
+
+pub fn standard_scissor(extent: vk::Extent2D) -> vk::Rect2D {
+    vk::Rect2D {
+        offset: vk::Offset2D { x: 0, y: 0 },
+        extent,
+    }
+}
+
+pub fn standard_viewport(extent: vk::Extent2D) -> vk::Viewport {
+    vk::Viewport {
+        x: 0.0,
+        y: 0.0,
+        width: extent.width as f32,
+        height: extent.height as f32,
+        min_depth: 0.0,
+        max_depth: 1.0,
+    }
+}
+
+pub fn standard_rendering_attachment_info(image_view: vk::ImageView) -> vk::RenderingAttachmentInfo<'static> {
+    vk::RenderingAttachmentInfo::default()
+        .image_view(image_view)
+        .load_op(vk::AttachmentLoadOp::LOAD)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+}
+
+pub fn standard_rendering_info<'a>(color_attachments: &'a [RenderingAttachmentInfo<'a>], extent: vk::Extent2D) -> vk::RenderingInfo<'a> {
+    vk::RenderingInfo::default()
+        .render_area(vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        })
+        .layer_count(1)
+        .color_attachments(color_attachments)
 }
 
 pub fn standard_pipeline_shader_stage_create_info(stage: vk::ShaderStageFlags, module: vk::ShaderModule, name: &'static CStr) -> vk::PipelineShaderStageCreateInfo<'static>{
